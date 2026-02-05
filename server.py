@@ -5,7 +5,7 @@ Automatically fetches images from a PUBLIC Google Drive folder.
 No API keys needed - just the folder ID!
 """
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import os
 import json
@@ -93,13 +93,17 @@ def fetch_public_folder(folder_id):
                         'url': f"https://drive.google.com/uc?export=view&id={file_id}"
                     })
 
-        # Remove duplicates by ID
+        # Remove duplicates by ID and use local proxy URL
         seen_ids = set()
         unique_files = []
         for f in files:
             if f['id'] not in seen_ids:
                 seen_ids.add(f['id'])
-                unique_files.append(f)
+                unique_files.append({
+                    'id': f['id'],
+                    'name': f['name'],
+                    'url': f"/image/{f['id']}"  # Use local proxy
+                })
         files = unique_files
 
         # Sort by name
@@ -196,10 +200,90 @@ def health():
             'last_update': last_update
         })
 
+IMAGE_CACHE_DIR = 'image_cache'
+
+# Create cache directory
+os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+
+@app.route('/image/<file_id>')
+def proxy_image(file_id):
+    """Proxy and cache Google Drive images."""
+    # Validate file_id (alphanumeric, dash, underscore only)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', file_id):
+        return "Invalid file ID", 400
+
+    # Check local cache first
+    cache_path = os.path.join(IMAGE_CACHE_DIR, f"{file_id}.jpg")
+    if os.path.exists(cache_path):
+        return send_from_directory(IMAGE_CACHE_DIR, f"{file_id}.jpg", mimetype='image/jpeg')
+
+    # Fetch from Google Drive
+    try:
+        drive_url = f"https://drive.google.com/uc?export=view&id={file_id}"
+        req = urllib.request.Request(drive_url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            image_data = response.read()
+
+        # Save to cache
+        with open(cache_path, 'wb') as f:
+            f.write(image_data)
+
+        return Response(image_data, mimetype='image/jpeg')
+    except Exception as e:
+        return f"Error loading image: {e}", 500
+
 @app.route('/')
 def index():
     """Serve the slideshow HTML."""
     return send_from_directory('.', 'slideshow.html')
+
+@app.route('/weather')
+def weather_test():
+    """Show weather slide with test data."""
+    return '''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 40px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+        }
+        .station { font-size: 36px; opacity: 0.9; margin-bottom: 20px; }
+        .temp { font-size: 120px; font-weight: 700; margin: 20px 0; }
+        .details { display: flex; gap: 40px; margin-top: 40px; flex-wrap: wrap; justify-content: center; }
+        .detail { background: rgba(255,255,255,0.15); padding: 25px 35px; border-radius: 15px; }
+        .detail .label { font-size: 14px; opacity: 0.8; text-transform: uppercase; margin-bottom: 8px; }
+        .detail .value { font-size: 32px; font-weight: 600; }
+        .updated { position: absolute; bottom: 30px; font-size: 16px; opacity: 0.6; }
+    </style>
+</head>
+<body>
+    <div class="station">KTEST001</div>
+    <div class="temp">72°F</div>
+    <div class="details">
+        <div class="detail"><div class="label">Humidity</div><div class="value">45%</div></div>
+        <div class="detail"><div class="label">Wind</div><div class="value">8 mph</div></div>
+        <div class="detail"><div class="label">Pressure</div><div class="value">30.12"</div></div>
+    </div>
+    <div class="updated">Updated: ''' + time.strftime("%I:%M %p") + '''</div>
+</body>
+</html>'''
 
 if __name__ == '__main__':
     if not config:

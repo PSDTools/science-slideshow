@@ -2,401 +2,216 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=1080, height=1920">
-    <title>Weather Slideshow</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slideshow</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            width: 1080px;
-            height: 1920px;
-            overflow: hidden;
             background: #000;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: white;
         }
 
-        .slide {
+        #slideshow {
             width: 100%;
             height: 100%;
+            position: relative;
+        }
+
+        .slide {
             position: absolute;
             top: 0;
             left: 0;
+            width: 100%;
+            height: 100%;
             opacity: 0;
-            transition: opacity 1s ease-in-out;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
+            transition: opacity 1s;
         }
 
         .slide.active {
             opacity: 1;
         }
 
-        /* Image Slide */
-        .image-slide {
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
+        .slide img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
 
         /* Weather Slide */
         .weather-slide {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 60px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
             text-align: center;
-        }
-
-        .weather-slide .station-name {
-            font-size: 48px;
-            font-weight: 300;
-            margin-bottom: 40px;
-            opacity: 0.9;
-        }
-
-        .weather-slide .current-temp {
-            font-size: 180px;
-            font-weight: 700;
-            margin: 40px 0;
-            text-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        }
-
-        .weather-slide .condition {
-            font-size: 56px;
-            font-weight: 300;
-            margin-bottom: 80px;
-            opacity: 0.95;
-        }
-
-        .weather-details {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 40px;
-            width: 100%;
-            max-width: 900px;
-            margin-top: 60px;
-        }
-
-        .weather-detail {
-            background: rgba(255, 255, 255, 0.15);
             padding: 40px;
-            border-radius: 20px;
-            backdrop-filter: blur(10px);
         }
 
-        .weather-detail .label {
-            font-size: 28px;
-            opacity: 0.8;
-            margin-bottom: 15px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-        }
+        .weather-slide .station { font-size: 36px; opacity: 0.9; margin-bottom: 20px; }
+        .weather-slide .temp { font-size: 120px; font-weight: 700; margin: 20px 0; }
+        .weather-slide .details { display: flex; gap: 40px; margin-top: 40px; flex-wrap: wrap; justify-content: center; }
+        .weather-slide .detail { background: rgba(255,255,255,0.15); padding: 25px 35px; border-radius: 15px; }
+        .weather-slide .detail .label { font-size: 14px; opacity: 0.8; text-transform: uppercase; margin-bottom: 8px; }
+        .weather-slide .detail .value { font-size: 32px; font-weight: 600; }
+        .weather-slide .updated { position: absolute; bottom: 30px; font-size: 16px; opacity: 0.6; }
 
-        .weather-detail .value {
-            font-size: 52px;
-            font-weight: 600;
-        }
-
-        .last-updated {
-            position: absolute;
-            bottom: 40px;
-            font-size: 24px;
-            opacity: 0.6;
-        }
-
-        .error-message {
-            background: rgba(255, 50, 50, 0.2);
-            padding: 30px;
-            border-radius: 15px;
-            font-size: 28px;
-            max-width: 800px;
-            text-align: center;
-        }
-
-        .loading {
-            font-size: 48px;
-            opacity: 0.7;
+        #debug {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            color: lime;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 14px;
+            border-radius: 8px;
+            z-index: 9999;
+            display: none;
         }
     </style>
 </head>
 <body>
-    <div id="slideshow-container"></div>
+    <div id="slideshow"></div>
+    <div id="debug"></div>
 
     <script>
-        // Configuration loaded from server
-        let CONFIG = {
-            weather: {
-                api_key: '',
-                station_id: ''
-            },
-            slideshow: {
-                image_duration_seconds: 10,
-                weather_duration_seconds: 15,
-                weather_refresh_minutes: 15,
-                images_refresh_minutes: 60
-            }
-        };
-
-        // State
+        let config = { weather: {}, slideshow: { image_duration_seconds: 5, weather_duration_seconds: 10 } };
+        let images = [];
+        let weather = null;
         let slides = [];
-        let currentSlideIndex = 0;
-        let weatherData = null;
-        let imageUrls = [];
+        let currentIndex = 0;
+        let countdown = 5;
+        let debugVisible = false;
 
-        // Utility: Sanitize URL to prevent injection
-        function sanitizeUrl(url) {
-            if (!url || typeof url !== 'string') return '';
-            // Only allow http, https, and data URLs
-            if (!url.match(/^(https?:\/\/|data:image\/)/i)) return '';
-            // Escape special CSS characters
-            return url.replace(/['"\\()]/g, '\\$&');
-        }
-
-        // Utility: Escape HTML to prevent XSS
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Load configuration from server
         async function loadConfig() {
             try {
                 const response = await fetch('/api/config');
-                if (response.ok) {
-                    const serverConfig = await response.json();
-                    CONFIG = { ...CONFIG, ...serverConfig };
-                    console.log('Configuration loaded from server');
-                }
-            } catch (error) {
-                console.error('Error loading config:', error);
-            }
+                config = await response.json();
+            } catch (e) {}
         }
 
-        // Fetch weather data
-        async function fetchWeatherData() {
-            if (!CONFIG.weather.api_key || !CONFIG.weather.station_id) {
-                console.log('Weather API not configured');
-                return null;
-            }
+        async function loadImages() {
+            const response = await fetch('/api/images');
+            const data = await response.json();
+            images = data.images || [];
+        }
 
+        async function loadWeather() {
+            if (!config.weather.api_key || !config.weather.station_id) return;
             try {
-                const url = `https://api.weather.com/v2/pws/observations/current?stationId=${encodeURIComponent(CONFIG.weather.station_id)}&format=json&units=e&apiKey=${encodeURIComponent(CONFIG.weather.api_key)}`;
+                const url = `https://api.weather.com/v2/pws/observations/current?stationId=${config.weather.station_id}&format=json&units=e&apiKey=${config.weather.api_key}`;
                 const response = await fetch(url);
-
-                if (!response.ok) {
-                    throw new Error(`Weather API error: ${response.status}`);
-                }
-
                 const data = await response.json();
-                if (data.observations && data.observations[0]) {
-                    weatherData = data.observations[0];
-                    console.log('Weather data fetched:', weatherData);
-                }
-                return weatherData;
-            } catch (error) {
-                console.error('Error fetching weather:', error);
-                return null;
-            }
+                weather = data.observations?.[0] || null;
+            } catch (e) {}
         }
 
-        // Fetch images from Flask server
-        async function fetchGoogleDriveImages() {
-            try {
-                const response = await fetch('/api/images');
-                const data = await response.json();
-
-                imageUrls = (data.images || [])
-                    .map(img => img.url)
-                    .filter(url => url && typeof url === 'string');
-
-                console.log(`Loaded ${imageUrls.length} images from Google Drive`);
-                if (data.last_updated) {
-                    console.log(`Last updated: ${new Date(data.last_updated * 1000).toLocaleString()}`);
-                }
-
-                return imageUrls;
-            } catch (error) {
-                console.error('Error fetching images from server:', error);
-                console.log('Make sure the Flask server is running!');
-                return [];
-            }
-        }
-
-        // Create weather slide HTML
-        function createWeatherSlide(weather) {
-            if (!weather) {
-                return `
-                    <div class="slide weather-slide">
-                        <div class="error-message">
-                            Weather data unavailable. Please check your API key and station ID in config.json.
-                        </div>
-                    </div>
-                `;
-            }
-
-            // Safely access nested properties with defaults
-            const imperial = weather.imperial || {};
-            const temp = imperial.temp != null ? Math.round(imperial.temp) : '--';
-            const humidity = weather.humidity != null ? weather.humidity : '--';
-            const windSpeed = imperial.windSpeed != null ? Math.round(imperial.windSpeed) : '--';
-            const windDir = weather.winddir != null ? weather.winddir : '--';
-            const pressure = imperial.pressure != null ? imperial.pressure : '--';
-            const dewpoint = imperial.dewpt != null ? Math.round(imperial.dewpt) : '--';
-            const stationID = escapeHtml(weather.stationID || CONFIG.weather.station_id || 'Unknown');
-
-            let timestamp = 'Unknown';
-            if (weather.obsTimeLocal) {
-                try {
-                    timestamp = new Date(weather.obsTimeLocal).toLocaleString();
-                } catch (e) {
-                    timestamp = escapeHtml(weather.obsTimeLocal);
-                }
-            }
+        function createWeatherSlide() {
+            if (!weather) return '';
+            const temp = weather.imperial?.temp != null ? Math.round(weather.imperial.temp) : '--';
+            const humidity = weather.humidity ?? '--';
+            const wind = weather.imperial?.windSpeed != null ? Math.round(weather.imperial.windSpeed) : '--';
+            const pressure = weather.imperial?.pressure ?? '--';
+            const station = weather.stationID || config.weather.station_id || '';
+            const time = weather.obsTimeLocal ? new Date(weather.obsTimeLocal).toLocaleTimeString() : '';
 
             return `
                 <div class="slide weather-slide">
-                    <div class="station-name">${stationID}</div>
-                    <div class="current-temp">${temp}°F</div>
-                    <div class="weather-details">
-                        <div class="weather-detail">
-                            <div class="label">Humidity</div>
-                            <div class="value">${humidity}%</div>
-                        </div>
-                        <div class="weather-detail">
-                            <div class="label">Wind</div>
-                            <div class="value">${windSpeed} mph ${windDir}°</div>
-                        </div>
-                        <div class="weather-detail">
-                            <div class="label">Pressure</div>
-                            <div class="value">${pressure}" Hg</div>
-                        </div>
-                        <div class="weather-detail">
-                            <div class="label">Dewpoint</div>
-                            <div class="value">${dewpoint}°F</div>
-                        </div>
+                    <div class="station">${station}</div>
+                    <div class="temp">${temp}°F</div>
+                    <div class="details">
+                        <div class="detail"><div class="label">Humidity</div><div class="value">${humidity}%</div></div>
+                        <div class="detail"><div class="label">Wind</div><div class="value">${wind} mph</div></div>
+                        <div class="detail"><div class="label">Pressure</div><div class="value">${pressure}"</div></div>
                     </div>
-                    <div class="last-updated">Updated: ${timestamp}</div>
+                    <div class="updated">Updated: ${time}</div>
                 </div>
             `;
         }
 
-        // Create image slide HTML
-        function createImageSlide(imageUrl) {
-            const safeUrl = sanitizeUrl(imageUrl);
-            if (!safeUrl) return '';
-            return `
-                <div class="slide image-slide" style="background-image: url('${safeUrl}');">
-                </div>
-            `;
+        function createImageSlide(url) {
+            return `<div class="slide"><img src="${url}"></div>`;
         }
 
-        // Build the slideshow
-        function buildSlideshow() {
-            const container = document.getElementById('slideshow-container');
+        function render() {
+            const container = document.getElementById('slideshow');
             container.innerHTML = '';
             slides = [];
 
-            // Add weather slide if configured
-            const weatherConfigured = CONFIG.weather.api_key && CONFIG.weather.station_id;
-            if (weatherData || weatherConfigured) {
-                const weatherSlideHTML = createWeatherSlide(weatherData);
-                container.innerHTML += weatherSlideHTML;
-                slides.push({
-                    type: 'weather',
-                    duration: CONFIG.slideshow.weather_duration_seconds * 1000
-                });
+            // Add weather slide if available
+            if (weather) {
+                container.innerHTML += createWeatherSlide();
+                slides.push({ type: 'weather', duration: config.slideshow.weather_duration_seconds });
             }
 
             // Add image slides
-            imageUrls.forEach(url => {
-                const imageSlideHTML = createImageSlide(url);
-                if (imageSlideHTML) {
-                    container.innerHTML += imageSlideHTML;
-                    slides.push({
-                        type: 'image',
-                        duration: CONFIG.slideshow.image_duration_seconds * 1000
-                    });
-                }
+            images.forEach(img => {
+                container.innerHTML += createImageSlide(img.url);
+                slides.push({ type: 'image', duration: config.slideshow.image_duration_seconds });
             });
 
-            // If no slides, show loading message
-            if (slides.length === 0) {
-                container.innerHTML = `
-                    <div class="slide weather-slide active">
-                        <div class="loading">Loading slideshow...</div>
-                        <div style="margin-top: 40px; font-size: 24px; opacity: 0.6; max-width: 800px; text-align: center;">
-                            Please configure your settings in config.json
-                        </div>
-                    </div>
-                `;
+            // Set first slide active
+            const firstSlide = container.querySelector('.slide');
+            if (firstSlide) firstSlide.classList.add('active');
+
+            // Set initial countdown
+            if (slides.length > 0) {
+                countdown = slides[0].duration;
             }
         }
 
         function showSlide(index) {
-            const slideElements = document.querySelectorAll('.slide');
-            slideElements.forEach(slide => slide.classList.remove('active'));
-
-            if (slideElements[index]) {
-                slideElements[index].classList.add('active');
-            }
+            const slideEls = document.querySelectorAll('.slide');
+            slideEls.forEach(s => s.classList.remove('active'));
+            if (slideEls[index]) slideEls[index].classList.add('active');
         }
 
         function nextSlide() {
             if (slides.length === 0) return;
-
-            currentSlideIndex = (currentSlideIndex + 1) % slides.length;
-            showSlide(currentSlideIndex);
-
-            // Schedule next slide
-            const currentSlide = slides[currentSlideIndex];
-            setTimeout(nextSlide, currentSlide.duration);
+            currentIndex = (currentIndex + 1) % slides.length;
+            showSlide(currentIndex);
+            countdown = slides[currentIndex].duration;
         }
 
-        function startSlideshow() {
+        function updateDebug() {
+            document.getElementById('debug').innerHTML =
+                `Slide: ${currentIndex + 1}/${slides.length}<br>` +
+                `Next in: ${countdown}s<br>` +
+                `Type: ${slides[currentIndex]?.type || 'none'}`;
+        }
+
+        function tick() {
             if (slides.length === 0) return;
-
-            showSlide(0);
-            setTimeout(nextSlide, slides[0].duration);
+            countdown--;
+            if (countdown <= 0) nextSlide();
+            if (debugVisible) updateDebug();
         }
 
-        // Initialize
-        async function initialize() {
-            console.log('Initializing slideshow...');
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'd' || e.key === 'D') {
+                debugVisible = !debugVisible;
+                document.getElementById('debug').style.display = debugVisible ? 'block' : 'none';
+                if (debugVisible) updateDebug();
+            }
+        });
 
-            // Load configuration from server
+        async function init() {
             await loadConfig();
-
-            // Fetch initial data
-            await fetchWeatherData();
-            await fetchGoogleDriveImages();
-
-            // Build and start slideshow
-            buildSlideshow();
-            startSlideshow();
-
-            // Set up periodic updates
-            setInterval(async () => {
-                console.log('Refreshing weather data...');
-                await fetchWeatherData();
-                buildSlideshow();
-            }, CONFIG.slideshow.weather_refresh_minutes * 60 * 1000);
-
-            setInterval(async () => {
-                console.log('Refreshing image list...');
-                await fetchGoogleDriveImages();
-                buildSlideshow();
-            }, CONFIG.slideshow.images_refresh_minutes * 60 * 1000);
+            await loadWeather();
+            await loadImages();
+            render();
+            if (slides.length > 0) {
+                setInterval(tick, 1000);
+            }
         }
 
-        // Start when page loads
-        window.addEventListener('load', initialize);
+        init();
     </script>
 </body>
 </html>
