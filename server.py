@@ -1,38 +1,25 @@
 #!/usr/bin/env python3
 """
-Simple Flask server to fetch images from a PUBLIC Google Drive folder.
-No OAuth needed - just an API key.
+Simple Flask server for a photo slideshow.
+Automatically fetches images from a PUBLIC Google Drive folder.
+No API keys needed - just the folder ID!
 """
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 import os
 import json
-import pickle
-import requests
+import re
 import time
+import pickle
+import urllib.request
+import urllib.error
 from threading import Thread, Lock
 
 app = Flask(__name__)
 CORS(app)
 
-# Load configuration
 CONFIG_FILE = 'config.json'
-
-def load_config():
-    """Load configuration from config.json."""
-    if not os.path.exists(CONFIG_FILE):
-        print(f"ERROR: {CONFIG_FILE} not found!")
-        return None
-
-    with open(CONFIG_FILE, 'r') as f:
-        return json.load(f)
-
-config = load_config()
-
-# Configuration from config file
-FOLDER_ID = config['google_drive']['folder_id'] if config else ''
-API_KEY = config['google_drive'].get('api_key', '') if config else ''
 CACHE_FILE = 'image_cache.pkl'
 CACHE_DURATION = 3600  # 1 hour
 
@@ -41,64 +28,82 @@ image_list = []
 last_update = 0
 cache_lock = Lock()
 
-def fetch_images_from_drive():
-    """Fetch all images from the public Google Drive folder."""
+def load_config():
+    """Load configuration from config.json."""
+    if not os.path.exists(CONFIG_FILE):
+        print(f"ERROR: {CONFIG_FILE} not found!")
+        return None
+    with open(CONFIG_FILE, 'r') as f:
+        return json.load(f)
+
+config = load_config()
+
+def fetch_public_folder(folder_id):
+    """Fetch image list from a public Google Drive folder (no API key needed)."""
     global image_list, last_update
 
-    if not FOLDER_ID:
-        print("ERROR: Google Drive folder_id not configured in config.json")
+    if not folder_id:
+        print("ERROR: No folder_id in config.json")
         return []
 
-    if not API_KEY:
-        print("ERROR: Google Drive api_key not configured in config.json")
-        return []
-
-    print("Fetching images from Google Drive...")
-
-    url = "https://www.googleapis.com/drive/v3/files"
-    params = {
-        'q': f"'{FOLDER_ID}' in parents and mimeType contains 'image/' and trashed=false",
-        'fields': 'files(id, name, mimeType)',
-        'pageSize': 100,
-        'orderBy': 'name',
-        'key': API_KEY
-    }
+    print(f"Fetching images from public folder: {folder_id}")
 
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+        # Fetch the public folder page
+        url = f"https://drive.google.com/drive/folders/{folder_id}"
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
 
-        files = data.get('files', [])
+        with urllib.request.urlopen(req, timeout=30) as response:
+            html = response.read().decode('utf-8')
 
-        new_image_list = [
-            {
-                'id': file['id'],
-                'name': file['name'],
-                'url': f"https://drive.google.com/uc?export=view&id={file['id']}"
-            }
-            for file in files
-        ]
+        # Extract file data from the page
+        # Google Drive embeds JSON data in the page containing file info
+        files = []
+
+        # Pattern to find file IDs and names in the page data
+        # Look for patterns like: ["FILE_ID","FILE_NAME",...]
+        pattern = r'\["([a-zA-Z0-9_-]{25,})","([^"]+)"'
+        matches = re.findall(pattern, html)
+
+        seen_ids = set()
+        for file_id, file_name in matches:
+            # Filter for image files by extension
+            lower_name = file_name.lower()
+            if any(lower_name.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
+                if file_id not in seen_ids:
+                    seen_ids.add(file_id)
+                    files.append({
+                        'id': file_id,
+                        'name': file_name,
+                        'url': f"https://drive.google.com/uc?export=view&id={file_id}"
+                    })
+
+        # Sort by name
+        files.sort(key=lambda x: x['name'])
 
         with cache_lock:
-            image_list = new_image_list
+            image_list = files
             last_update = time.time()
 
         # Save to cache
         with open(CACHE_FILE, 'wb') as f:
             pickle.dump({'images': image_list, 'time': last_update}, f)
 
-        print(f"Found {len(image_list)} images")
-        return image_list
+        print(f"Found {len(files)} images")
+        return files
 
+    except urllib.error.URLError as e:
+        print(f"Network error fetching folder: {e}")
+        return []
     except Exception as e:
-        print(f"Error fetching images: {e}")
+        print(f"Error fetching folder: {e}")
         return []
 
 def load_cache():
     """Load cached image list."""
     global image_list, last_update
-
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'rb') as f:
@@ -110,25 +115,26 @@ def load_cache():
         except Exception as e:
             print(f"Error loading cache: {e}")
 
-def update_images_periodically():
+def update_periodically():
     """Background thread to update images periodically."""
+    folder_id = config.get('google_drive', {}).get('folder_id', '') if config else ''
     while True:
         with cache_lock:
             current_last_update = last_update
-
         if time.time() - current_last_update > CACHE_DURATION:
-            fetch_images_from_drive()
+            fetch_public_folder(folder_id)
         time.sleep(300)  # Check every 5 minutes
 
 @app.route('/api/images')
 def get_images():
     """API endpoint to get list of images."""
+    folder_id = config.get('google_drive', {}).get('folder_id', '') if config else ''
+
     with cache_lock:
         current_last_update = last_update
 
-    # If cache is old, fetch new data
     if time.time() - current_last_update > CACHE_DURATION:
-        fetch_images_from_drive()
+        fetch_public_folder(folder_id)
 
     with cache_lock:
         return jsonify({
@@ -140,7 +146,8 @@ def get_images():
 @app.route('/api/refresh')
 def refresh_images():
     """Manually refresh the image list."""
-    fetch_images_from_drive()
+    folder_id = config.get('google_drive', {}).get('folder_id', '') if config else ''
+    fetch_public_folder(folder_id)
     with cache_lock:
         return jsonify({
             'status': 'success',
@@ -152,13 +159,9 @@ def get_config():
     """Get frontend configuration."""
     if not config:
         return jsonify({'error': 'Configuration not loaded'}), 500
-
     return jsonify({
-        'weather': {
-            'api_key': config['weather']['api_key'],
-            'station_id': config['weather']['station_id']
-        },
-        'slideshow': config['slideshow']
+        'weather': config.get('weather', {}),
+        'slideshow': config.get('slideshow', {})
     })
 
 @app.route('/health')
@@ -179,11 +182,11 @@ def index():
 if __name__ == '__main__':
     if not config:
         print("Cannot start server without configuration.")
-        print("Please create config.json with your settings.")
         exit(1)
 
+    folder_id = config.get('google_drive', {}).get('folder_id', '')
     print("Starting slideshow server...")
-    print(f"Folder ID: {FOLDER_ID or '(not configured)'}")
+    print(f"Folder ID: {folder_id or '(not configured)'}")
 
     # Load cache first
     load_cache()
@@ -191,17 +194,15 @@ if __name__ == '__main__':
     # Fetch images on startup
     with cache_lock:
         current_image_list = image_list
-
-    if not current_image_list and FOLDER_ID and API_KEY:
-        fetch_images_from_drive()
+    if not current_image_list and folder_id:
+        fetch_public_folder(folder_id)
 
     # Start background update thread
-    update_thread = Thread(target=update_images_periodically, daemon=True)
+    update_thread = Thread(target=update_periodically, daemon=True)
     update_thread.start()
 
     # Start Flask server
-    host = config['server']['host']
-    port = config['server']['port']
+    host = config.get('server', {}).get('host', '0.0.0.0')
+    port = config.get('server', {}).get('port', 5000)
     print(f"\nServer running at: http://localhost:{port}")
-    print(f"Open http://localhost:{port} in Chromium to see the slideshow")
     app.run(host=host, port=port, debug=False)

@@ -1,7 +1,6 @@
 {
     "google_drive": {
-        "folder_id": "",
-        "api_key": ""
+        "folder_id": ""
     },
     "weather": {
         "api_key": "",
@@ -9,12 +8,9 @@
     },
     "slideshow": {
         "image_duration_seconds": 10,
-        "weather_duration_seconds": 15,
-        "weather_refresh_minutes": 15,
-        "images_refresh_minutes": 60
+        "weather_duration_seconds": 15
     },
     "server": {
-        "host": "0.0.0.0",
         "port": 5000
     }
 }
