@@ -16,6 +16,16 @@ Turn your Raspberry Pi into a beautiful photo frame that automatically shows pic
 
 ---
 
+## One-Line Install
+
+```bash
+git clone https://github.com/PSDTools/science-slideshow.git ~/slideshow && cd ~/slideshow && pip3 install -r requirements.txt --break-system-packages
+```
+
+Then edit `config.json` with your settings and add your `credentials.json` file. [Full setup instructions below](#step-by-step-setup).
+
+---
+
 ## What You'll Need
 
 - Raspberry Pi (3, 4, or 5)
