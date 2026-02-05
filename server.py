@@ -59,26 +59,48 @@ def fetch_public_folder(folder_id):
             html = response.read().decode('utf-8')
 
         # Extract file data from the page
-        # Google Drive embeds JSON data in the page containing file info
+        # Google Drive embeds JSON data with HTML-encoded quotes
         files = []
 
-        # Pattern to find file IDs and names in the page data
-        # Look for patterns like: ["FILE_ID","FILE_NAME",...]
-        pattern = r'\["([a-zA-Z0-9_-]{25,})","([^"]+)"'
-        matches = re.findall(pattern, html)
+        # Unescape HTML entities
+        html = html.replace('&quot;', '"').replace('&#39;', "'")
 
-        seen_ids = set()
-        for file_id, file_name in matches:
-            # Filter for image files by extension
-            lower_name = file_name.lower()
-            if any(lower_name.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
-                if file_id not in seen_ids:
-                    seen_ids.add(file_id)
+        # Find all image filenames (excluding Google's static assets)
+        img_extensions = r'\.(?:jpg|jpeg|png|gif|webp|bmp)'
+        name_pattern = rf'"([^"/]+{img_extensions})"'
+        all_names = re.findall(name_pattern, html, re.IGNORECASE)
+
+        # Filter out Google's own images
+        image_names = [n for n in all_names if not n.startswith('//') and 'gstatic' not in n]
+        image_names = list(dict.fromkeys(image_names))  # Remove duplicates, keep order
+
+        # For each image name, find the file ID that appears before it
+        for name in image_names:
+            # Find position of this filename
+            search_str = f'"{name}"'
+            pos = html.find(search_str)
+            if pos > 0:
+                # Look backwards for a file ID (33 chars, alphanumeric with - and _)
+                context_before = html[max(0, pos-600):pos]
+                # File IDs in Drive are typically 33 characters
+                ids = re.findall(r'"([a-zA-Z0-9_-]{33})"', context_before)
+                if ids:
+                    # Take the last (closest) ID
+                    file_id = ids[-1]
                     files.append({
                         'id': file_id,
-                        'name': file_name,
+                        'name': name,
                         'url': f"https://drive.google.com/uc?export=view&id={file_id}"
                     })
+
+        # Remove duplicates by ID
+        seen_ids = set()
+        unique_files = []
+        for f in files:
+            if f['id'] not in seen_ids:
+                seen_ids.add(f['id'])
+                unique_files.append(f)
+        files = unique_files
 
         # Sort by name
         files.sort(key=lambda x: x['name'])
