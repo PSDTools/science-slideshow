@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Simple Flask server to automatically fetch images from Google Drive folder.
-This runs on your Raspberry Pi and provides the image list to the slideshow.
+Simple Flask server to fetch images from a PUBLIC Google Drive folder.
+No OAuth needed - just an API key.
 """
 
 from flask import Flask, jsonify, send_from_directory
@@ -9,10 +9,7 @@ from flask_cors import CORS
 import os
 import json
 import pickle
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+import requests
 import time
 from threading import Thread, Lock
 
@@ -26,7 +23,6 @@ def load_config():
     """Load configuration from config.json."""
     if not os.path.exists(CONFIG_FILE):
         print(f"ERROR: {CONFIG_FILE} not found!")
-        print("Please copy config.json.example to config.json and fill in your values.")
         return None
 
     with open(CONFIG_FILE, 'r') as f:
@@ -35,8 +31,8 @@ def load_config():
 config = load_config()
 
 # Configuration from config file
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 FOLDER_ID = config['google_drive']['folder_id'] if config else ''
+API_KEY = config['google_drive'].get('api_key', '') if config else ''
 CACHE_FILE = 'image_cache.pkl'
 CACHE_DURATION = 3600  # 1 hour
 
@@ -45,55 +41,35 @@ image_list = []
 last_update = 0
 cache_lock = Lock()
 
-def get_drive_service():
-    """Authenticate and return Drive service."""
-    creds = None
-
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists('credentials.json'):
-                print("ERROR: credentials.json not found!")
-                print("Please download it from Google Cloud Console.")
-                return None
-
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
-
-    return build('drive', 'v3', credentials=creds)
-
 def fetch_images_from_drive():
-    """Fetch all images from the Google Drive folder."""
+    """Fetch all images from the public Google Drive folder."""
     global image_list, last_update
 
     if not FOLDER_ID:
         print("ERROR: Google Drive folder_id not configured in config.json")
         return []
 
-    print("Fetching images from Google Drive...")
-    service = get_drive_service()
-    if not service:
+    if not API_KEY:
+        print("ERROR: Google Drive api_key not configured in config.json")
         return []
 
-    query = f"'{FOLDER_ID}' in parents and mimeType contains 'image/' and trashed=false"
+    print("Fetching images from Google Drive...")
+
+    url = "https://www.googleapis.com/drive/v3/files"
+    params = {
+        'q': f"'{FOLDER_ID}' in parents and mimeType contains 'image/' and trashed=false",
+        'fields': 'files(id, name, mimeType)',
+        'pageSize': 100,
+        'orderBy': 'name',
+        'key': API_KEY
+    }
 
     try:
-        results = service.files().list(
-            q=query,
-            fields="files(id, name, mimeType, thumbnailLink)",
-            pageSize=100,
-            orderBy='name'
-        ).execute()
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
 
-        files = results.get('files', [])
+        files = data.get('files', [])
 
         new_image_list = [
             {
@@ -147,8 +123,6 @@ def update_images_periodically():
 @app.route('/api/images')
 def get_images():
     """API endpoint to get list of images."""
-    global image_list, last_update
-
     with cache_lock:
         current_last_update = last_update
 
@@ -218,7 +192,7 @@ if __name__ == '__main__':
     with cache_lock:
         current_image_list = image_list
 
-    if not current_image_list and FOLDER_ID:
+    if not current_image_list and FOLDER_ID and API_KEY:
         fetch_images_from_drive()
 
     # Start background update thread

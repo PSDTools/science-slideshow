@@ -1,6 +1,7 @@
 {
     "google_drive": {
-        "folder_id": ""
+        "folder_id": "",
+        "api_key": ""
     },
     "weather": {
         "api_key": "",

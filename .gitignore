@@ -8,9 +8,8 @@ env/
 venv/
 .venv/
 
-# Credentials and tokens (NEVER commit these)
+# Credentials (NEVER commit these)
 credentials.json
-token.pickle
 
 # Cache files
 image_cache.pkl
