@@ -43,12 +43,19 @@ info "Running as:   ${CURRENT_USER}"
 # ── 1. System packages ────────────────────────────────────────────────────────
 info "Installing system packages..."
 sudo apt-get update -qq
-sudo apt-get install -y \
-    chromium-browser \
-    unclutter \
-    curl \
-    git \
-    --no-install-recommends
+sudo apt-get install -y curl git unclutter --no-install-recommends
+
+# Chromium package name changed in Pi OS Bookworm (2023+)
+if apt-cache show chromium &>/dev/null; then
+    sudo apt-get install -y chromium --no-install-recommends
+    CHROMIUM_BIN="chromium"
+elif apt-cache show chromium-browser &>/dev/null; then
+    sudo apt-get install -y chromium-browser --no-install-recommends
+    CHROMIUM_BIN="chromium-browser"
+else
+    abort "Neither 'chromium' nor 'chromium-browser' found in apt. Install Chromium manually."
+fi
+info "Chromium binary: ${CHROMIUM_BIN}"
 
 # ── 2. Node.js via nvm ───────────────────────────────────────────────────────
 NVM_DIR="${USER_HOME}/.nvm"
@@ -144,7 +151,7 @@ xset s off
 xset s noblank
 xset -dpms
 # Launch Chromium in kiosk mode
-chromium-browser \
+${CHROMIUM_BIN} \
     --kiosk \
     --noerr \
     --disable-infobars \
