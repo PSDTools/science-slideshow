@@ -110,23 +110,33 @@ info "Installing cage-kiosk systemd service..."
 cat > /etc/systemd/system/cage-kiosk.service <<'EOF'
 [Unit]
 Description=Cage Minimal Kiosk
-After=systemd-user-sessions.service network-online.target
+After=systemd-user-sessions.service network-online.target systemd-logind.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Wait for the Node.js server to come up on port 3000
+# Wayland compositors must have a TTY to take over the display
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+# Run as the main user, not root (ensures Chromium works properly)
+User=${CURRENT_USER}
+Group=video
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Wait for SvelteKit on port 3000
 ExecStartPre=/bin/bash -c "for i in {1..30}; do curl -sf http://localhost:3000 >/dev/null && break; sleep 1; done"
-# Launch cage with Chromium
-ExecStart=/usr/bin/cage -s -- chromium --kiosk --noerr --disable-infobars --no-first-run --disable-restore-session-state --ozone-platform-hint=auto --enable-gpu-rasterization --enable-zero-copy --num-raster-threads=2 http://localhost:3000
+ExecStart=/usr/bin/cage -s -d -- chromium --kiosk --noerr --disable-infobars --no-first-run --disable-restore-session-state --ozone-platform-hint=auto --enable-gpu-rasterization --enable-zero-copy --num-raster-threads=2 http://localhost:3000
 Restart=always
 RestartSec=5
-User=pi
-Environment=WLR_LIBINPUT_NO_DEVICES=1
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
+
 
 systemctl daemon-reload
 systemctl enable cage-kiosk.service
