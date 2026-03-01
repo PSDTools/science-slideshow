@@ -532,7 +532,7 @@
 	}
 
 	function initRain(heavy: boolean) {
-		const count = heavy ? 320 : 150,
+		const count = heavy ? 180 : 80,
 			angle = heavy ? 18 : 7;
 		drops = [];
 		for (let i = 0; i < count; i++)
@@ -569,7 +569,7 @@
 
 	function initSnow() {
 		flakes = [];
-		for (let i = 0; i < 200; i++)
+		for (let i = 0; i < 100; i++)
 			flakes.push({
 				x: Math.random() * wxCanvas.width,
 				y: Math.random() * wxCanvas.height,
@@ -605,12 +605,17 @@
 
 	function animLoop(type: string) {
 		const heavy = type === 'storm';
-		function step() {
-			if (type === 'rain' || type === 'storm') drawRain(heavy);
-			else if (type === 'snow') drawSnow();
+		let lastFrame = 0;
+		function step(now: number) {
+			// Cap at ~30 fps to reduce CPU load on low-power devices
+			if (now - lastFrame >= 33) {
+				lastFrame = now;
+				if (type === 'rain' || type === 'storm') drawRain(heavy);
+				else if (type === 'snow') drawSnow();
+			}
 			animId = requestAnimationFrame(step);
 		}
-		step();
+		animId = requestAnimationFrame(step);
 	}
 
 	/* ── PARTICLES ── */
@@ -629,7 +634,7 @@
 	function buildStars() {
 		const p = el<HTMLDivElement>('wx-particles')!;
 		// Moon visibility/position is handled by positionCelestialBodies()
-		for (let i = 0; i < 115; i++) {
+		for (let i = 0; i < 60; i++) {
 			const s = document.createElement('div');
 			s.className = 'wx-star';
 			const sz = 0.5 + Math.random() * 2.4;
@@ -655,7 +660,7 @@
 
 	function buildFireflies() {
 		const p = el<HTMLDivElement>('wx-particles')!;
-		for (let i = 0; i < 22; i++) {
+		for (let i = 0; i < 12; i++) {
 			const f = document.createElement('div');
 			f.className = 'wx-ff';
 			f.style.left = `${8 + Math.random() * 84}vw`;
@@ -1277,6 +1282,7 @@
 		inset: 0;
 		pointer-events: none;
 		z-index: 2;
+		will-change: transform;
 	}
 	:global(#tree-canvas) {
 		position: fixed;
@@ -1285,6 +1291,7 @@
 		width: calc(100% + 40px);
 		pointer-events: none;
 		z-index: 5;
+		will-change: transform;
 	}
 	:global(.wx-root.is-precip #tree-canvas) {
 		filter: brightness(0.45);
@@ -1377,9 +1384,9 @@
 		inset: 0;
 		z-index: 4;
 		pointer-events: none;
-		background: rgba(200, 220, 240, var(--haze-alpha, 0));
+		/* backdrop-filter removed — too GPU-expensive on low-power devices */
+		background: rgba(180, 205, 230, var(--haze-alpha, 0));
 		transition: background 3s ease;
-		backdrop-filter: blur(calc(var(--haze-alpha, 0) * 3px));
 	}
 
 	/* ── UV SUN BOOST ── */
@@ -1630,8 +1637,8 @@
 		z-index: 30;
 		display: none;
 		padding: 10px clamp(16px, 3vw, 48px);
-		background: rgba(210, 110, 10, 0.8);
-		backdrop-filter: blur(12px);
+		/* backdrop-filter removed — too GPU-expensive on low-power devices */
+		background: rgba(200, 100, 5, 0.92);
 		font-family: 'Outfit', sans-serif;
 		font-weight: 400;
 		font-size: clamp(11px, 1.5vw, 15px);
