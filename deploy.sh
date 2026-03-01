@@ -170,10 +170,7 @@ exec "\${CHROMIUM}" \\
     --ozone-platform-hint=auto \\
     --enable-gpu-rasterization \\
     --enable-zero-copy \\
-    --ignore-gpu-blocklist \\
-    --disable-gpu-driver-bug-workarounds \\
     --num-raster-threads=2 \\
-    --use-gl=egl \\
     "\${URL}"
 EOF
 chmod +x "${LAUNCH_SCRIPT}"
