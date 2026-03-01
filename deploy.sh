@@ -130,68 +130,130 @@ sudo systemctl enable "${SERVICE_NAME}"
 sudo systemctl restart "${SERVICE_NAME}"
 info "Service started. Check with: sudo systemctl status ${SERVICE_NAME}"
 
-# ── 5. Kiosk autostart ────────────────────────────────────────────────────────
-info "Installing kiosk autostart..."
-AUTOSTART_DIR="${USER_HOME}/.config/autostart"
-mkdir -p "${AUTOSTART_DIR}"
+# ── 5. Kiosk launcher script ──────────────────────────────────────────────────
+info "Writing kiosk launcher..."
+LAUNCH_SCRIPT="${APP_DIR}/wait-and-launch.sh"
 
-# Wait-for-server helper script
-sudo -u "${CURRENT_USER}" tee "${APP_DIR}/wait-and-launch.sh" > /dev/null <<'SCRIPT'
+sudo -u "${CURRENT_USER}" tee "${LAUNCH_SCRIPT}" > /dev/null <<EOF
 #!/usr/bin/env bash
-# Wait until the app is responding, then launch Chromium in kiosk mode
-URL="$1"
-for i in $(seq 1 30); do
-    curl -sf "$URL" > /dev/null 2>&1 && break
+# Launched by systemd --user after graphical-session.target.
+# Waits for the SvelteKit server, then opens Chromium in kiosk mode.
+URL="${KIOSK_URL}"
+CHROMIUM="${CHROMIUM_BIN}"
+
+# Disable screen blanking (X11)
+if command -v xset &>/dev/null; then
+    xset s off s noblank -dpms 2>/dev/null || true
+fi
+
+# Hide cursor after 1s idle (X11 only; no-op on Wayland)
+if command -v unclutter &>/dev/null; then
+    unclutter -idle 1 -root &
+fi
+
+# Wait up to 30s for the Node server
+for i in \$(seq 1 30); do
+    curl -sf "\${URL}" > /dev/null 2>&1 && break
     sleep 1
 done
-# Hide the mouse cursor after 1 s of inactivity
-unclutter -idle 1 &
-# Disable screen blanking
-xset s off
-xset s noblank
-xset -dpms
-# Launch Chromium in kiosk mode
-${CHROMIUM_BIN} \
-    --kiosk \
-    --noerr \
-    --disable-infobars \
-    --no-first-run \
-    --disable-restore-session-state \
-    --disable-session-crashed-bubble \
-    --disable-translate \
-    --disable-features=TranslateUI \
-    --check-for-update-interval=31536000 \
-    "$URL"
-SCRIPT
-chmod +x "${APP_DIR}/wait-and-launch.sh"
 
-# Desktop autostart entry (works with LXDE / Wayfire / labwc on Pi OS)
+exec "\${CHROMIUM}" \\
+    --kiosk \\
+    --noerr \\
+    --disable-infobars \\
+    --no-first-run \\
+    --disable-restore-session-state \\
+    --disable-session-crashed-bubble \\
+    --disable-translate \\
+    --disable-features=TranslateUI \\
+    --check-for-update-interval=31536000 \\
+    --ozone-platform-hint=auto \\
+    "\${URL}"
+EOF
+chmod +x "${LAUNCH_SCRIPT}"
+
+# ── 6. Boot to desktop with autologin ────────────────────────────────────────
+info "Configuring Pi to boot to Desktop Autologin..."
+if command -v raspi-config &>/dev/null; then
+    sudo raspi-config nonint do_boot_behaviour B4
+    info "Boot behaviour set to Desktop Autologin (B4)"
+else
+    warn "raspi-config not found — set boot to 'Desktop Autologin' manually via: sudo raspi-config"
+fi
+
+# ── 7. Kiosk autostart — all three mechanisms ─────────────────────────────────
+info "Installing kiosk autostart (systemd user + XDG + LXDE + Wayfire)..."
+
+# 7a. systemd --user service (most reliable, works on all desktops)
+SYSTEMD_USER_DIR="${USER_HOME}/.config/systemd/user"
+sudo -u "${CURRENT_USER}" mkdir -p "${SYSTEMD_USER_DIR}"
+sudo -u "${CURRENT_USER}" tee "${SYSTEMD_USER_DIR}/slideshow-kiosk.service" > /dev/null <<EOF
+[Unit]
+Description=Slideshow Kiosk Browser
+After=graphical-session.target network.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/$(id -u "${CURRENT_USER}")
+ExecStartPre=/bin/sleep 5
+ExecStart=${LAUNCH_SCRIPT}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+
+# Enable the user service (persists across reboots)
+sudo -u "${CURRENT_USER}" \
+    XDG_RUNTIME_DIR="/run/user/$(id -u "${CURRENT_USER}")" \
+    systemctl --user enable slideshow-kiosk.service 2>/dev/null || \
+    loginctl enable-linger "${CURRENT_USER}"
+
+# 7b. XDG autostart .desktop (GNOME, LXQt, etc.)
+AUTOSTART_DIR="${USER_HOME}/.config/autostart"
+sudo -u "${CURRENT_USER}" mkdir -p "${AUTOSTART_DIR}"
 sudo -u "${CURRENT_USER}" tee "${AUTOSTART_DIR}/slideshow-kiosk.desktop" > /dev/null <<EOF
 [Desktop Entry]
 Type=Application
 Name=Slideshow Kiosk
-Exec=${APP_DIR}/wait-and-launch.sh ${KIOSK_URL}
+Exec=${LAUNCH_SCRIPT}
 X-GNOME-Autostart-enabled=true
 EOF
 
-# Also add to LXDE autostart if it exists (Pi OS Bullseye legacy)
+# 7c. LXDE autostart (Pi OS Bullseye and older)
 LXDE_AUTOSTART="${USER_HOME}/.config/lxsession/LXDE-pi/autostart"
-if [[ -f "${LXDE_AUTOSTART}" ]]; then
-    if ! grep -q "wait-and-launch" "${LXDE_AUTOSTART}"; then
-        echo "@${APP_DIR}/wait-and-launch.sh ${KIOSK_URL}" >> "${LXDE_AUTOSTART}"
-        info "Added kiosk entry to LXDE autostart"
+if [[ -d "$(dirname "${LXDE_AUTOSTART}")" ]]; then
+    [[ -f "${LXDE_AUTOSTART}" ]] || \
+        sudo -u "${CURRENT_USER}" cp /etc/xdg/lxsession/LXDE-pi/autostart "${LXDE_AUTOSTART}" 2>/dev/null || \
+        sudo -u "${CURRENT_USER}" touch "${LXDE_AUTOSTART}"
+    if ! grep -q "wait-and-launch" "${LXDE_AUTOSTART}" 2>/dev/null; then
+        echo "@${LAUNCH_SCRIPT}" | sudo -u "${CURRENT_USER}" tee -a "${LXDE_AUTOSTART}" > /dev/null
+        info "Added entry to LXDE autostart"
     fi
 fi
 
-# ── 6. Boot to desktop with autologin ────────────────────────────────────────
-# The kiosk autostart only fires when the desktop is running.
-# B4 = "Desktop Autologin" in raspi-config (boots straight to LXDE/Wayland as current user).
-info "Configuring Pi to boot to desktop (autologin)..."
-if command -v raspi-config &>/dev/null; then
-    sudo raspi-config nonint do_boot_behaviour B4
-    info "Boot behaviour set to Desktop Autologin"
-else
-    warn "raspi-config not found — set boot to 'Desktop Autologin' manually via: sudo raspi-config"
+# 7d. Wayfire autostart (Pi OS Bookworm with Wayfire compositor)
+WAYFIRE_INI="${USER_HOME}/.config/wayfire.ini"
+if [[ -f "${WAYFIRE_INI}" ]]; then
+    if ! grep -q "slideshow" "${WAYFIRE_INI}"; then
+        printf '\n[autostart]\nslideshow = %s\n' "${LAUNCH_SCRIPT}" | \
+            sudo -u "${CURRENT_USER}" tee -a "${WAYFIRE_INI}" > /dev/null
+        info "Added entry to Wayfire autostart"
+    fi
+fi
+
+# 7e. labwc autostart (Pi OS Bookworm with labwc compositor — default since late 2024)
+LABWC_AUTOSTART="${USER_HOME}/.config/labwc/autostart"
+if [[ -d "$(dirname "${LABWC_AUTOSTART}")" ]] || command -v labwc &>/dev/null; then
+    sudo -u "${CURRENT_USER}" mkdir -p "$(dirname "${LABWC_AUTOSTART}")"
+    if ! grep -q "wait-and-launch" "${LABWC_AUTOSTART}" 2>/dev/null; then
+        echo "${LAUNCH_SCRIPT} &" | sudo -u "${CURRENT_USER}" tee -a "${LABWC_AUTOSTART}" > /dev/null
+        info "Added entry to labwc autostart"
+    fi
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
