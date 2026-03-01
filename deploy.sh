@@ -183,6 +183,17 @@ if [[ -f "${LXDE_AUTOSTART}" ]]; then
     fi
 fi
 
+# ── 6. Boot to desktop with autologin ────────────────────────────────────────
+# The kiosk autostart only fires when the desktop is running.
+# B4 = "Desktop Autologin" in raspi-config (boots straight to LXDE/Wayland as current user).
+info "Configuring Pi to boot to desktop (autologin)..."
+if command -v raspi-config &>/dev/null; then
+    sudo raspi-config nonint do_boot_behaviour B4
+    info "Boot behaviour set to Desktop Autologin"
+else
+    warn "raspi-config not found — set boot to 'Desktop Autologin' manually via: sudo raspi-config"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
