@@ -173,10 +173,12 @@
 <div class="root">
 	{#each slides as slide, i}
 		<div class="slide" class:active={i === current}>
-			{#if slide.type === 'image'}
-				<img src={slide.url} alt="" loading="lazy" />
-			{:else}
-				<WeatherDisplay data={weatherData} {entering} {arcConfig} />
+			{#if Math.abs(i - current) <= 1}
+				{#if slide.type === 'image'}
+					<img src={slide.url} alt="" />
+				{:else}
+					<WeatherDisplay data={weatherData} {entering} {arcConfig} />
+				{/if}
 			{/if}
 		</div>
 	{/each}

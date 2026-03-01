@@ -115,7 +115,9 @@ export async function proxyImage(
 	}
 
 	try {
-		const driveUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+		// Use Drive's thumbnail endpoint capped at 1920px wide.
+		// Much smaller than the full-resolution export — critical for Pi performance.
+		const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1920`;
 		const res = await fetch(driveUrl, {
 			headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
 		});

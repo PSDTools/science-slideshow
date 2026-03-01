@@ -92,11 +92,50 @@ info "Setting swappiness to 10..."
 echo "vm.swappiness=10" > /etc/sysctl.d/99-kiosk.conf
 sysctl -w vm.swappiness=10 > /dev/null
 
-# ── 6. /tmp on RAM ────────────────────────────────────────────────────────────
-if ! grep -q "tmpfs /tmp" /etc/fstab; then
-    echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,size=64m 0 0" >> /etc/fstab
-    info "Mounted /tmp as tmpfs (64MB RAM)"
+# ── 7. Minimal Headless Kiosk (Cage) ──────────────────────────────────────────
+# Replace the heavy desktop environment (LXDE/Wayfire) with a minimal Wayland
+# compositor (cage) that runs exactly ONE fullscreen application.
+info "Installing Cage (minimal Wayland compositor)..."
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get install -y cage --no-install-recommends
+
+# Set boot behaviour to CLI Autologin (B2) instead of Desktop
+info "Setting boot to CLI Autologin (B2)..."
+if command -v raspi-config &>/dev/null; then
+    sudo raspi-config nonint do_boot_behaviour B2
 fi
+
+# Create the dedicated Cage+Chromium systemd service
+info "Installing cage-kiosk systemd service..."
+cat > /etc/systemd/system/cage-kiosk.service <<'EOF'
+[Unit]
+Description=Cage Minimal Kiosk
+After=systemd-user-sessions.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Wait for the Node.js server to come up on port 3000
+ExecStartPre=/bin/bash -c "for i in {1..30}; do curl -sf http://localhost:3000 >/dev/null && break; sleep 1; done"
+# Launch cage with Chromium
+ExecStart=/usr/bin/cage -s -- chromium --kiosk --noerr --disable-infobars --no-first-run --disable-restore-session-state --ozone-platform-hint=auto --enable-gpu-rasterization --enable-zero-copy --num-raster-threads=2 http://localhost:3000
+Restart=always
+RestartSec=5
+User=pi
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable cage-kiosk.service
+info "  cage-kiosk service installed and enabled"
+
+# Disable the heavy desktop services
+info "Disabling heavy desktop UI services..."
+systemctl disable lightdm 2>/dev/null || true
+systemctl disable sddm 2>/dev/null || true
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
@@ -110,7 +149,9 @@ echo -e "${GREEN}║   ✓ 7 background services disabled                  ║${
 echo -e "${GREEN}║   ✓ CPU governor → performance                      ║${NC}"
 echo -e "${GREEN}║   ✓ Swappiness → 10 (avoids SD card thrash)        ║${NC}"
 echo -e "${GREEN}║   ✓ /tmp on RAM (64MB tmpfs)                       ║${NC}"
+echo -e "${GREEN}║   ✓ Full desktop replaced by Cage (CLI autologin)   ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+
 echo ""
 read -rp "Reboot now? [y/N] " ans
 [[ "${ans,,}" == y ]] && reboot
