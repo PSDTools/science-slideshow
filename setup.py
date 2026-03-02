@@ -19,8 +19,8 @@ def main():
     print("    This step configures GPU memory, swap, and CPU performance.")
     try:
         # We run tune-pi.sh with sudo. 
-        # Note: If it prompts to reboot, you should usually answer 'n' so deploy.sh can run!
-        subprocess.run(["sudo", "./tune-pi.sh"], check=True)
+        # Pass "n\n" via stdin so we automatically decline the reboot prompt
+        subprocess.run(["sudo", "./tune-pi.sh"], input=b"n\n", check=True)
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] tune-pi.sh failed with exit code {e.returncode}")
         sys.exit(1)
