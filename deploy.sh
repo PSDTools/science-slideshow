@@ -204,47 +204,46 @@ if [[ -f "${SYSTEMD_USER_DIR}/slideshow-kiosk.service" ]]; then
     rm -f "${SYSTEMD_USER_DIR}/slideshow-kiosk.service"
 fi
 
-# 7b. XDG autostart .desktop (GNOME, LXQt, etc.)
+# 7b. Decide on a single autostart mechanism depending on OS/Wayland/X11
+WAYFIRE_INI="${USER_HOME}/.config/wayfire.ini"
+LABWC_AUTOSTART="${USER_HOME}/.config/labwc/autostart"
+LXDE_AUTOSTART="${USER_HOME}/.config/lxsession/LXDE-pi/autostart"
 AUTOSTART_DIR="${USER_HOME}/.config/autostart"
-sudo -u "${CURRENT_USER}" mkdir -p "${AUTOSTART_DIR}"
-sudo -u "${CURRENT_USER}" tee "${AUTOSTART_DIR}/slideshow-kiosk.desktop" > /dev/null <<EOF
+
+if [[ -d "$(dirname "${LABWC_AUTOSTART}")" ]] || command -v labwc &>/dev/null; then
+    # Default since late 2024 (Pi OS Bookworm)
+    sudo -u "${CURRENT_USER}" mkdir -p "$(dirname "${LABWC_AUTOSTART}")"
+    if ! grep -q "wait-and-launch" "${LABWC_AUTOSTART}" 2>/dev/null; then
+        echo "${LAUNCH_SCRIPT} &" | sudo -u "${CURRENT_USER}" tee -a "${LABWC_AUTOSTART}" > /dev/null
+        info "Added entry to labwc autostart (exclusive)"
+    fi
+elif [[ -f "${WAYFIRE_INI}" ]]; then
+    # Early Bookworm Wayland
+    if ! grep -q "slideshow" "${WAYFIRE_INI}"; then
+        printf '\n[autostart]\nslideshow = %s\n' "${LAUNCH_SCRIPT}" | \
+            sudo -u "${CURRENT_USER}" tee -a "${WAYFIRE_INI}" > /dev/null
+        info "Added entry to Wayfire autostart (exclusive)"
+    fi
+elif [[ -d "$(dirname "${LXDE_AUTOSTART}")" ]]; then
+    # Bullseye and older X11
+    [[ -f "${LXDE_AUTOSTART}" ]] || \
+        sudo -u "${CURRENT_USER}" cp /etc/xdg/lxsession/LXDE-pi/autostart "${LXDE_AUTOSTART}" 2>/dev/null || \
+        sudo -u "${CURRENT_USER}" touch "${LXDE_AUTOSTART}"
+    if ! grep -q "wait-and-launch" "${LXDE_AUTOSTART}" 2>/dev/null; then
+        echo "@${LAUNCH_SCRIPT}" | sudo -u "${CURRENT_USER}" tee -a "${LXDE_AUTOSTART}" > /dev/null
+        info "Added entry to LXDE autostart (exclusive)"
+    fi
+else
+    # Generic XDG Desktop Autostart fallback
+    sudo -u "${CURRENT_USER}" mkdir -p "${AUTOSTART_DIR}"
+    sudo -u "${CURRENT_USER}" tee "${AUTOSTART_DIR}/slideshow-kiosk.desktop" > /dev/null <<EOF
 [Desktop Entry]
 Type=Application
 Name=Slideshow Kiosk
 Exec=${LAUNCH_SCRIPT}
 X-GNOME-Autostart-enabled=true
 EOF
-
-# 7c. LXDE autostart (Pi OS Bullseye and older)
-LXDE_AUTOSTART="${USER_HOME}/.config/lxsession/LXDE-pi/autostart"
-if [[ -d "$(dirname "${LXDE_AUTOSTART}")" ]]; then
-    [[ -f "${LXDE_AUTOSTART}" ]] || \
-        sudo -u "${CURRENT_USER}" cp /etc/xdg/lxsession/LXDE-pi/autostart "${LXDE_AUTOSTART}" 2>/dev/null || \
-        sudo -u "${CURRENT_USER}" touch "${LXDE_AUTOSTART}"
-    if ! grep -q "wait-and-launch" "${LXDE_AUTOSTART}" 2>/dev/null; then
-        echo "@${LAUNCH_SCRIPT}" | sudo -u "${CURRENT_USER}" tee -a "${LXDE_AUTOSTART}" > /dev/null
-        info "Added entry to LXDE autostart"
-    fi
-fi
-
-# 7d. Wayfire autostart (Pi OS Bookworm with Wayfire compositor)
-WAYFIRE_INI="${USER_HOME}/.config/wayfire.ini"
-if [[ -f "${WAYFIRE_INI}" ]]; then
-    if ! grep -q "slideshow" "${WAYFIRE_INI}"; then
-        printf '\n[autostart]\nslideshow = %s\n' "${LAUNCH_SCRIPT}" | \
-            sudo -u "${CURRENT_USER}" tee -a "${WAYFIRE_INI}" > /dev/null
-        info "Added entry to Wayfire autostart"
-    fi
-fi
-
-# 7e. labwc autostart (Pi OS Bookworm with labwc compositor — default since late 2024)
-LABWC_AUTOSTART="${USER_HOME}/.config/labwc/autostart"
-if [[ -d "$(dirname "${LABWC_AUTOSTART}")" ]] || command -v labwc &>/dev/null; then
-    sudo -u "${CURRENT_USER}" mkdir -p "$(dirname "${LABWC_AUTOSTART}")"
-    if ! grep -q "wait-and-launch" "${LABWC_AUTOSTART}" 2>/dev/null; then
-        echo "${LAUNCH_SCRIPT} &" | sudo -u "${CURRENT_USER}" tee -a "${LABWC_AUTOSTART}" > /dev/null
-        info "Added entry to labwc autostart"
-    fi
+    info "Added generic XDG autostart desktop entry (exclusive)"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
