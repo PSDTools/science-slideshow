@@ -93,7 +93,7 @@
 		h = h % 12 || 12;
 		const c = el('wx-clock');
 		const dt = el('wx-date');
-		if (c) c.textContent = `${h}:${pad(d.getMinutes())}:${pad(d.getSeconds())}\u202f${ap}`;
+		if (c) c.textContent = `${h}:${pad(d.getMinutes())}\u202f${ap}`;
 		const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 		const months = [
 			'January',
@@ -540,7 +540,7 @@
 				x: Math.random() * (wxCanvas.width + 200) - 100,
 				y: Math.random() * wxCanvas.height,
 				len: heavy ? 22 + Math.random() * 20 : 14 + Math.random() * 12,
-				spd: heavy ? 18 + Math.random() * 14 : 11 + Math.random() * 8,
+				spd: heavy ? 9 + Math.random() * 7 : 5 + Math.random() * 4,
 				op: 0.18 + Math.random() * 0.48,
 				ang: ((angle + (Math.random() - 0.5) * 6) * Math.PI) / 180
 			});
@@ -574,8 +574,8 @@
 				x: Math.random() * wxCanvas.width,
 				y: Math.random() * wxCanvas.height,
 				r: 1.2 + Math.random() * 4.5,
-				spd: 0.4 + Math.random() * 1.1,
-				drift: (Math.random() - 0.5) * 0.5,
+				spd: 0.2 + Math.random() * 0.5,
+				drift: (Math.random() - 0.5) * 0.3,
 				op: 0.35 + Math.random() * 0.55,
 				off: Math.random() * Math.PI * 2
 			});
@@ -634,7 +634,7 @@
 	function buildStars() {
 		const p = el<HTMLDivElement>('wx-particles')!;
 		// Moon visibility/position is handled by positionCelestialBodies()
-		for (let i = 0; i < 60; i++) {
+		for (let i = 0; i < 20; i++) {
 			const s = document.createElement('div');
 			s.className = 'wx-star';
 			const sz = 0.5 + Math.random() * 2.4;
@@ -660,7 +660,7 @@
 
 	function buildFireflies() {
 		const p = el<HTMLDivElement>('wx-particles')!;
-		for (let i = 0; i < 12; i++) {
+		for (let i = 0; i < 5; i++) {
 			const f = document.createElement('div');
 			f.className = 'wx-ff';
 			f.style.left = `${8 + Math.random() * 84}vw`;
@@ -812,7 +812,7 @@
 		// Remove old streaks
 		Array.from(p.querySelectorAll('.wx-wind-streak')).forEach((e) => e.remove());
 		if (windSpeed < 5) return; // no visible streaks below 5 mph
-		const count = Math.round(Math.min(windSpeed / 2.5, 22)); // 2-22 streaks
+		const count = Math.round(Math.min(windSpeed / 5, 11)); // 1-11 streaks
 		const speedFactor = Math.min(windSpeed / 30, 1); // 0-1
 		for (let i = 0; i < count; i++) {
 			const w = document.createElement('div');
@@ -1460,8 +1460,8 @@
 		border-radius: 50%;
 		background: rgba(165, 220, 70, 0.75);
 		animation:
-			wx-ff-drift var(--d, 4.5s) ease-in-out infinite alternate,
-			wx-ff-pulse var(--p, 3s) ease-in-out infinite;
+			wx-ff-drift var(--d, 11s) ease-in-out infinite alternate,
+			wx-ff-pulse var(--p, 7s) ease-in-out infinite;
 	}
 	@keyframes wx-ff-drift {
 		from {
@@ -1554,7 +1554,7 @@
 			rgba(255, 225, 80, 0.22) 360deg
 		);
 		filter: blur(8px);
-		animation: wx-ray-spin 16s linear infinite;
+		animation: wx-ray-spin 50s linear infinite;
 		z-index: 1;
 	}
 	@keyframes wx-ray-spin {
@@ -1577,7 +1577,7 @@
 			transparent 70%
 		);
 		filter: blur(20px);
-		animation: wx-sun-breathe 4s ease-in-out infinite;
+		animation: wx-sun-breathe 10s ease-in-out infinite;
 		z-index: 0;
 	}
 
