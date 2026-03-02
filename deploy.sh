@@ -115,9 +115,10 @@ After=network.target
 [Service]
 Type=simple
 User=${CURRENT_USER}
-WorkingDirectory=${APP_DIR}/svelte
+WorkingDirectory=${APP_DIR}/svelte/build
 Environment=PORT=${APP_PORT}
-ExecStart=${NODE_BIN} ${APP_DIR}/svelte/build/index.js
+ExecStartPre=-/usr/bin/env python3 ${APP_DIR}/sync.py &
+ExecStart=/usr/bin/env python3 -m http.server ${APP_PORT}
 Restart=on-failure
 RestartSec=5
 
@@ -157,6 +158,8 @@ for i in \$(seq 1 30); do
     sleep 1
 done
 
+    sleep 5
+
 while true; do
     "\${CHROMIUM}" \\
         --kiosk \\
@@ -168,9 +171,9 @@ while true; do
         --disable-restore-session-state \\
         --disable-session-crashed-bubble \\
         --disable-translate \\
-        --disable-features=TranslateUI \
-        --check-for-update-interval=31536000 \
-        --ozone-platform-hint=auto \
+        --disable-features=TranslateUI \\
+        --check-for-update-interval=31536000 \\
+        --ozone-platform-hint=auto \\
         "\${URL}"
     # If Chromium crashes, wait a moment and then loop back to restart it
     sleep 3

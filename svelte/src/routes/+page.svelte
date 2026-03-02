@@ -69,7 +69,7 @@
 
 	async function loadConfig() {
 		try {
-			const r = await fetch('/api/config');
+			const r = await fetch('/api/config.json');
 			cfg = await r.json();
 			arcConfig = { ...ARC_DEFAULTS, ...(cfg.arc ?? {}) };
 		} catch {}
@@ -78,7 +78,7 @@
 	async function loadWeather(): Promise<WeatherData | null> {
 		if (!cfg.weather.enabled) return null;
 		try {
-			const r = await fetch('/api/weather');
+			const r = await fetch(`/api/weather.json?t=${Date.now()}`);
 			if (!r.ok) return null;
 			return await r.json();
 		} catch {
@@ -88,7 +88,7 @@
 
 	async function loadImages(): Promise<DriveImage[]> {
 		try {
-			const r = await fetch('/api/images');
+			const r = await fetch(`/api/images.json?t=${Date.now()}`);
 			const d = await r.json();
 			return d.images ?? [];
 		} catch {
