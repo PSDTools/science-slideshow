@@ -187,34 +187,14 @@ fi
 # ── 7. Kiosk autostart — all three mechanisms ─────────────────────────────────
 info "Installing kiosk autostart (systemd user + XDG + LXDE + Wayfire)..."
 
-# 7a. systemd --user service (most reliable, works on all desktops)
+# 7a. Clean up any broken systemd user services we might have created
 SYSTEMD_USER_DIR="${USER_HOME}/.config/systemd/user"
-sudo -u "${CURRENT_USER}" mkdir -p "${SYSTEMD_USER_DIR}"
-sudo -u "${CURRENT_USER}" tee "${SYSTEMD_USER_DIR}/slideshow-kiosk.service" > /dev/null <<EOF
-[Unit]
-Description=Slideshow Kiosk Browser
-After=graphical-session.target network.target
-Wants=graphical-session.target
-
-[Service]
-Type=simple
-Environment=DISPLAY=:0
-Environment=WAYLAND_DISPLAY=wayland-0
-Environment=XDG_RUNTIME_DIR=/run/user/$(id -u "${CURRENT_USER}")
-ExecStartPre=/bin/sleep 5
-ExecStart=${LAUNCH_SCRIPT}
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=graphical-session.target
-EOF
-
-# Enable the user service (persists across reboots)
-sudo -u "${CURRENT_USER}" \
-    XDG_RUNTIME_DIR="/run/user/$(id -u "${CURRENT_USER}")" \
-    systemctl --user enable slideshow-kiosk.service 2>/dev/null || \
-    loginctl enable-linger "${CURRENT_USER}"
+if [[ -f "${SYSTEMD_USER_DIR}/slideshow-kiosk.service" ]]; then
+    sudo -u "${CURRENT_USER}" \
+        XDG_RUNTIME_DIR="/run/user/$(id -u "${CURRENT_USER}")" \
+        systemctl --user disable slideshow-kiosk.service 2>/dev/null || true
+    rm -f "${SYSTEMD_USER_DIR}/slideshow-kiosk.service"
+fi
 
 # 7b. XDG autostart .desktop (GNOME, LXQt, etc.)
 AUTOSTART_DIR="${USER_HOME}/.config/autostart"
