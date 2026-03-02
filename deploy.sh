@@ -159,7 +159,9 @@ done
 
 while true; do
     "\${CHROMIUM}" \\
-        --kiosk \
+        --kiosk \\
+        --incognito \\
+        --user-data-dir=/tmp/kiosk-profile \\
         --disable-dev-shm-usage \\
         --password-store=basic \\
         --noerr \\
