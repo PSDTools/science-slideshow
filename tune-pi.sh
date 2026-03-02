@@ -55,7 +55,6 @@ DISABLE_SERVICES=(
     bluetooth
     hciuart          # Bluetooth UART
     triggerhappy     # Hot-key daemon
-    avahi-daemon     # mDNS — not needed
     cups             # Printing
     cups-browsed
     ModemManager     # Mobile modems

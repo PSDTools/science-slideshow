@@ -1499,11 +1499,10 @@
 		0%,
 		100% {
 			transform: scale(1);
-			filter: blur(2px) brightness(1);
 		}
 		50% {
 			transform: scale(1.07);
-			filter: blur(3px) brightness(1.1);
+			opacity: 1.1;
 		}
 	}
 	:global(#wx-sun-corona) {
@@ -1550,8 +1549,8 @@
 			rgba(255, 225, 80, 0.22) 320deg,
 			rgba(255, 225, 80, 0.04) 330deg,
 			rgba(255, 225, 80, 0.22) 340deg,
-			rgba(255, 225, 80, 0.04) 350deg,
-			rgba(255, 225, 80, 0.22) 360deg
+			rgba(255, 225, 80, 0.22) 350deg,
+			rgba(255, 225, 80, 0.04) 360deg
 		);
 		filter: blur(8px);
 		animation: wx-ray-spin 50s linear infinite;
@@ -1576,7 +1575,6 @@
 			rgba(255, 200, 40, 0.08) 45%,
 			transparent 70%
 		);
-		filter: blur(20px);
 		animation: wx-sun-breathe 10s ease-in-out infinite;
 		z-index: 0;
 	}
@@ -1587,7 +1585,6 @@
 		left: -15%;
 		width: 130%;
 		border-radius: 50%;
-		filter: blur(32px);
 		animation: wx-mist-flow ease-in-out infinite alternate;
 	}
 	@keyframes wx-mist-flow {

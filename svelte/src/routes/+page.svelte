@@ -16,6 +16,7 @@
 	}
 	type SlideType =
 		| { type: 'weather' }
+		| { type: 'radar' }
 		| { type: 'image'; url: string; name: string; duration?: number };
 
 	/**
@@ -97,7 +98,10 @@
 
 	function buildSlides(images: DriveImage[], hasWeather: boolean): SlideType[] {
 		const s: SlideType[] = [];
-		if (hasWeather) s.push({ type: 'weather' });
+		if (hasWeather) {
+			s.push({ type: 'weather' });
+			s.push({ type: 'radar' });
+		}
 		for (const img of images) {
 			const duration = parseDuration(img.name) ?? undefined;
 			s.push({ type: 'image', url: img.url, name: img.name, duration });
@@ -144,7 +148,8 @@
 		function currentDuration() {
 			if (!slides.length) return 10;
 			const s = slides[current];
-			if (s?.type === 'weather') return cfg.slideshow.weather_duration_seconds ?? 15;
+			if (s?.type === 'weather' || s?.type === 'radar')
+				return cfg.slideshow.weather_duration_seconds ?? 15;
 			// Per-file override wins over config default
 			return s?.duration ?? cfg.slideshow.image_duration_seconds ?? 10;
 		}
@@ -164,6 +169,11 @@
 	});
 
 	const currentSlide = $derived(slides[current] ?? null);
+
+	function getRadarUrl() {
+		// Cache bust the radar loop every 5 minutes (300000ms)
+		return `https://radar.weather.gov/ridge/standard/KLSX_loop.gif?t=${Math.floor(Date.now() / 300000)}`;
+	}
 </script>
 
 <svelte:head>
@@ -173,9 +183,12 @@
 <div class="root">
 	{#each slides as slide, i}
 		<div class="slide" class:active={i === current}>
-			{#if Math.abs(i - current) <= 1}
+			{#if Math.abs(i - current) <= 1 || (i === 0 && current === slides.length - 1) || (i === slides.length - 1 && current === 0)}
 				{#if slide.type === 'image'}
 					<img src={slide.url} alt="" />
+				{:else if slide.type === 'radar'}
+					<!-- svelte-ignore a11y_missing_attribute -->
+					<img src={getRadarUrl()} />
 				{:else}
 					<WeatherDisplay data={weatherData} {entering} {arcConfig} />
 				{/if}
