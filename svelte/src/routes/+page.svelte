@@ -123,6 +123,15 @@
 
 			ticker = setInterval(() => {
 				countdown--;
+				// Preload next image when 3s away from transition
+				if (countdown === 3) {
+					const nextIdx = (current + 1) % (slides.length || 1);
+					const next = slides[nextIdx];
+					if (next?.type === 'image') {
+						const img = new Image();
+						img.src = next.url;
+					}
+				}
 				if (countdown <= 0) {
 					current = (current + 1) % (slides.length || 1);
 					countdown = currentDuration();
@@ -185,10 +194,10 @@
 		<div class="slide" class:active={i === current}>
 			{#if i === current}
 				{#if slide.type === 'image'}
-					<img src={slide.url} alt="" />
+					<img src={slide.url} alt="" decoding="async" />
 				{:else if slide.type === 'radar'}
 					<!-- svelte-ignore a11y_missing_attribute -->
-					<img src={getRadarUrl()} />
+					<img src={getRadarUrl()} decoding="async" />
 				{:else}
 					<WeatherDisplay data={weatherData} {entering} {arcConfig} />
 				{/if}
@@ -237,11 +246,13 @@
 		opacity: 0;
 		pointer-events: none;
 		overflow: hidden;
+		content-visibility: hidden; /* browser skips rendering entirely for inactive slides */
 	}
 
 	.slide.active {
 		opacity: 1;
 		pointer-events: auto;
+		content-visibility: visible;
 	}
 
 	.slide img {

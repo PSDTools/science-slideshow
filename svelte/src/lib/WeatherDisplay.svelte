@@ -60,7 +60,7 @@
 	let wxCanvas: HTMLCanvasElement;
 	let treeCanvas: HTMLCanvasElement;
 
-	// Canvas state
+	// Canvas state — rain & snow
 	let drops: { x: number; y: number; len: number; spd: number; op: number; ang: number }[] = [];
 	let flakes: {
 		x: number;
@@ -74,8 +74,24 @@
 	let animId = 0;
 	let snowT = 0;
 	let lightningTimeout = 0;
-	let shootTimeout = 0;
 	let mounted = false;
+
+	// Canvas-based particle state (replaces DOM particles for GPU efficiency)
+	let cStars: { x: number; y: number; sz: number; baseOp: number; phase: number; speed: number }[] = [];
+	let cFireflies: { x: number; y: number; dx: number; dy: number; driftDur: number; pulseDur: number; phase: number }[] = [];
+	let cMist: { y: number; h: number; r: number; g: number; b: number; op: number; speed: number; offset: number }[] = [];
+	let cWindStreaks: { x: number; y: number; len: number; speed: number; ang: number; op: number }[] = [];
+	let cShootStar = { active: false, x: 0, y: 0, ang: 0, progress: 0, speed: 0 };
+
+	// Unified animation loop state
+	let lastFrameTime = 0;
+	let lastCelestialTime = 0;
+	let nextShootTime = 0;
+	let currentAnimType = '';
+
+	// Moon phase cache — avoid re-rendering 7-9 gradient ops every tick
+	let lastRenderedPhase = -1;
+	let moonPhaseCv: HTMLCanvasElement | null = null;
 
 	// helper: query within our container
 	function el<T extends Element>(id: string): T | null {
@@ -109,8 +125,8 @@
 			'November',
 			'December'
 		];
-		if (dt) dt.textContent = `${days[d.getDay()]}  ·  ${months[d.getMonth()]} ${d.getDate()}`; // Reposition sun and moon every tick so playback and real drift stay smooth
-		positionCelestialBodies(_celestialData);
+		if (dt) dt.textContent = `${days[d.getDay()]}  ·  ${months[d.getMonth()]} ${d.getDate()}`;
+		// Celestial repositioning moved to unified animation loop (every 30s)
 	}
 
 	function windDir(deg: number) {
@@ -194,6 +210,16 @@
 	 * phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter
 	 */
 	function renderMoonPhase(moonEl: HTMLElement, phase: number) {
+		// Cache: only re-render when phase changes meaningfully (~1 hour)
+		if (Math.abs(phase - lastRenderedPhase) < 0.002 && moonPhaseCv) {
+			if (!moonEl.contains(moonPhaseCv)) {
+				moonEl.innerHTML = '';
+				moonEl.appendChild(moonPhaseCv);
+			}
+			return;
+		}
+		lastRenderedPhase = phase;
+
 		// Canvas is larger than the visible disc so the glow can bleed out naturally
 		const size = 180;
 		const discR = 34; // moon disc radius in canvas px
@@ -210,6 +236,7 @@
 		if (cv.width !== size) {
 			cv.width = cv.height = size;
 		}
+		moonPhaseCv = cv;
 		const ctx = cv.getContext('2d')!;
 		ctx.clearRect(0, 0, size, size);
 
@@ -524,7 +551,7 @@
 		c.fillRect(0, gndY * 0.38, W, gndY * 0.62);
 	}
 
-	/* ── CANVAS: RAIN / SNOW ── */
+	/* ── CANVAS ── */
 	function resizeCanvas() {
 		if (!wxCanvas) return;
 		wxCanvas.width = window.innerWidth;
@@ -532,7 +559,7 @@
 	}
 
 	function initRain(heavy: boolean) {
-		const count = heavy ? 180 : 80,
+		const count = heavy ? 120 : 60,
 			angle = heavy ? 18 : 7;
 		drops = [];
 		for (let i = 0; i < count; i++)
@@ -546,30 +573,35 @@
 			});
 	}
 
-	function drawRain(heavy: boolean) {
-		const c = wxCanvas.getContext('2d')!;
-		c.clearRect(0, 0, wxCanvas.width, wxCanvas.height);
-		c.save();
+	function drawRain(ctx: CanvasRenderingContext2D, heavy: boolean) {
+		// Batch into 4 opacity buckets — one stroke() per bucket
+		const buckets: (typeof drops)[] = [[], [], [], []];
 		for (const d of drops) {
-			c.beginPath();
-			c.strokeStyle = heavy ? `rgba(160,200,245,${d.op})` : `rgba(120,175,225,${d.op})`;
-			c.lineWidth = heavy ? 1.4 : 0.9;
-			c.moveTo(d.x, d.y);
-			c.lineTo(d.x + Math.sin(d.ang) * d.len, d.y + Math.cos(d.ang) * d.len);
-			c.stroke();
-			d.y += d.spd;
-			d.x += Math.sin(d.ang) * d.spd;
-			if (d.y > wxCanvas.height) {
-				d.y = -d.len;
-				d.x = Math.random() * (wxCanvas.width + 200) - 100;
-			}
+			buckets[Math.min(3, (d.op * 4) | 0)].push(d);
 		}
-		c.restore();
+		const rgb = heavy ? '160,200,245' : '120,175,225';
+		ctx.lineWidth = heavy ? 1.4 : 0.9;
+		for (let bi = 0; bi < 4; bi++) {
+			if (!buckets[bi].length) continue;
+			ctx.strokeStyle = `rgba(${rgb},${((bi + 0.5) / 4).toFixed(2)})`;
+			ctx.beginPath();
+			for (const d of buckets[bi]) {
+				ctx.moveTo(d.x, d.y);
+				ctx.lineTo(d.x + Math.sin(d.ang) * d.len, d.y + Math.cos(d.ang) * d.len);
+				d.y += d.spd;
+				d.x += Math.sin(d.ang) * d.spd;
+				if (d.y > wxCanvas.height) {
+					d.y = -d.len;
+					d.x = Math.random() * (wxCanvas.width + 200) - 100;
+				}
+			}
+			ctx.stroke();
+		}
 	}
 
 	function initSnow() {
 		flakes = [];
-		for (let i = 0; i < 100; i++)
+		for (let i = 0; i < 60; i++)
 			flakes.push({
 				x: Math.random() * wxCanvas.width,
 				y: Math.random() * wxCanvas.height,
@@ -581,111 +613,219 @@
 			});
 	}
 
-	function drawSnow() {
-		const c = wxCanvas.getContext('2d')!;
-		c.clearRect(0, 0, wxCanvas.width, wxCanvas.height);
+	function drawSnow(ctx: CanvasRenderingContext2D) {
 		snowT += 0.008;
-		c.save();
+		// Batch into 4 opacity buckets
+		const buckets: (typeof flakes)[] = [[], [], [], []];
 		for (const f of flakes) {
-			c.beginPath();
-			c.arc(f.x, f.y, f.r, 0, Math.PI * 2);
-			c.fillStyle = `rgba(215,235,252,${f.op})`;
-			c.fill();
-			f.y += f.spd;
-			f.x += f.drift + Math.sin(snowT + f.off) * 0.5;
-			if (f.y > wxCanvas.height + f.r) {
-				f.y = -f.r;
-				f.x = Math.random() * wxCanvas.width;
-			}
-			if (f.x > wxCanvas.width + f.r) f.x = -f.r;
-			if (f.x < -f.r) f.x = wxCanvas.width + f.r;
+			buckets[Math.min(3, ((f.op - 0.35) / 0.55 * 4) | 0)].push(f);
 		}
-		c.restore();
+		for (let bi = 0; bi < 4; bi++) {
+			if (!buckets[bi].length) continue;
+			ctx.fillStyle = `rgba(215,235,252,${(0.35 + (bi + 0.5) / 4 * 0.55).toFixed(2)})`;
+			ctx.beginPath();
+			for (const f of buckets[bi]) {
+				ctx.moveTo(f.x + f.r, f.y);
+				ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+				f.y += f.spd;
+				f.x += f.drift + Math.sin(snowT + f.off) * 0.5;
+				if (f.y > wxCanvas.height + f.r) { f.y = -f.r; f.x = Math.random() * wxCanvas.width; }
+				if (f.x > wxCanvas.width + f.r) f.x = -f.r;
+				if (f.x < -f.r) f.x = wxCanvas.width + f.r;
+			}
+			ctx.fill();
+		}
 	}
 
-	function animLoop(type: string) {
-		const heavy = type === 'storm';
-		let lastFrame = 0;
-		function step(now: number) {
-			// Cap at ~30 fps to reduce CPU load on low-power devices
-			if (now - lastFrame >= 33) {
-				lastFrame = now;
-				if (type === 'rain' || type === 'storm') drawRain(heavy);
-				else if (type === 'snow') drawSnow();
+	/* ── CANVAS PARTICLE DRAWING (replaces ~40 DOM elements) ── */
+	function drawStarsCanvas(ctx: CanvasRenderingContext2D, now: number) {
+		for (const s of cStars) {
+			const op = s.baseOp * (0.5 + 0.5 * Math.sin(now * s.speed * 0.001 + s.phase));
+			if (op < 0.02) continue;
+			ctx.fillStyle = `rgba(216,234,255,${op.toFixed(2)})`;
+			ctx.fillRect(s.x, s.y, s.sz, s.sz);
+		}
+	}
+
+	function drawFirefliesCanvas(ctx: CanvasRenderingContext2D, now: number) {
+		const t = now * 0.001;
+		for (const f of cFireflies) {
+			const dx = Math.sin(t / f.driftDur + f.phase) * f.dx;
+			const dy = Math.cos(t / f.driftDur + f.phase) * f.dy;
+			const pulse = Math.sin(t * Math.PI / f.pulseDur + f.phase);
+			const op = pulse > 0.3 ? (pulse - 0.3) / 0.7 : 0;
+			if (op < 0.02) continue;
+			ctx.fillStyle = `rgba(165,220,70,${(op * 0.75).toFixed(2)})`;
+			ctx.beginPath();
+			ctx.arc(f.x + dx, f.y + dy, 1.5, 0, Math.PI * 2);
+			ctx.fill();
+		}
+	}
+
+	function drawMistCanvas(ctx: CanvasRenderingContext2D, now: number) {
+		const W = wxCanvas.width;
+		for (const m of cMist) {
+			const x = Math.sin(now * 0.001 / m.speed + m.offset) * 15;
+			ctx.fillStyle = `rgba(${m.r},${m.g},${m.b},${m.op.toFixed(3)})`;
+			ctx.fillRect(x - W * 0.15, wxCanvas.height - m.y - m.h, W * 1.3, m.h);
+		}
+	}
+
+	function drawWindStreaksCanvas(ctx: CanvasRenderingContext2D) {
+		ctx.lineWidth = 1;
+		for (const w of cWindStreaks) {
+			w.x += w.speed;
+			if (w.x > wxCanvas.width * 1.1) {
+				w.x = -w.len - Math.random() * wxCanvas.width * 0.2;
+				w.y = Math.random() * wxCanvas.height * 0.9;
 			}
+			const rad = w.ang * Math.PI / 180;
+			ctx.strokeStyle = `rgba(200,225,255,${w.op.toFixed(3)})`;
+			ctx.beginPath();
+			ctx.moveTo(w.x, w.y);
+			ctx.lineTo(w.x + Math.cos(rad) * w.len, w.y + Math.sin(rad) * w.len);
+			ctx.stroke();
+		}
+	}
+
+	function drawShootingStarCanvas(ctx: CanvasRenderingContext2D) {
+		const s = cShootStar;
+		if (!s.active) return;
+		s.progress += s.speed;
+		if (s.progress >= 1) { s.active = false; return; }
+		const rad = s.ang * Math.PI / 180;
+		const dist = 0.35 * wxCanvas.width;
+		const curX = s.x + Math.cos(rad) * dist * s.progress;
+		const curY = s.y + Math.sin(rad) * dist * s.progress;
+		const tailLen = dist * 0.15;
+		const tailX = curX - Math.cos(rad) * tailLen;
+		const tailY = curY - Math.sin(rad) * tailLen;
+		const grad = ctx.createLinearGradient(tailX, tailY, curX, curY);
+		const op = s.progress < 0.15 ? s.progress / 0.15 : Math.max(0, 1 - (s.progress - 0.5) / 0.5);
+		grad.addColorStop(0, 'rgba(255,255,255,0)');
+		grad.addColorStop(1, `rgba(255,255,255,${(op * 0.9).toFixed(2)})`);
+		ctx.strokeStyle = grad;
+		ctx.lineWidth = 1.5;
+		ctx.beginPath();
+		ctx.moveTo(tailX, tailY);
+		ctx.lineTo(curX, curY);
+		ctx.stroke();
+	}
+
+	/* ── CANVAS PARTICLE INITIALIZERS ── */
+	function initStarsCanvas() {
+		cStars = [];
+		const W = wxCanvas.width, H = wxCanvas.height;
+		for (let i = 0; i < 12; i++) {
+			cStars.push({
+				x: Math.random() * W, y: Math.random() * H * 0.72,
+				sz: 0.5 + Math.random() * 2.4, baseOp: 0.12 + Math.random() * 0.88,
+				phase: Math.random() * Math.PI * 2, speed: 0.4 + Math.random() * 1.2
+			});
+		}
+		nextShootTime = performance.now() + 4000 + Math.random() * 9000;
+	}
+
+	function initFirefliesCanvas() {
+		cFireflies = [];
+		for (let i = 0; i < 3; i++) {
+			cFireflies.push({
+				x: wxCanvas.width * (0.08 + Math.random() * 0.84),
+				y: wxCanvas.height * (0.22 + Math.random() * 0.55),
+				dx: Math.random() * 130 - 65, dy: Math.random() * 90 - 45,
+				driftDur: 3.5 + Math.random() * 6.5, pulseDur: 2.2 + Math.random() * 4.2,
+				phase: Math.random() * Math.PI * 2
+			});
+		}
+	}
+
+	function initMistCanvas(r: number, g: number, b: number) {
+		cMist = [];
+		for (let i = 0; i < 3; i++) {
+			cMist.push({
+				y: i * 6.5 * wxCanvas.height / 100 + Math.random() * wxCanvas.height * 0.1,
+				h: 55 + Math.random() * 85, r, g, b,
+				op: 0.024 + Math.random() * 0.036,
+				speed: 8 + Math.random() * 12, offset: Math.random() * Math.PI * 2
+			});
+		}
+	}
+
+	function initWindStreaksCanvas(windSpeed: number) {
+		cWindStreaks = [];
+		if (windSpeed < 5) return;
+		const count = Math.round(Math.min(windSpeed / 5, 5));
+		const speedFactor = Math.min(windSpeed / 30, 1);
+		for (let i = 0; i < count; i++) {
+			cWindStreaks.push({
+				x: Math.random() * wxCanvas.width, y: Math.random() * wxCanvas.height * 0.9,
+				len: 60 + Math.random() * 120 + speedFactor * 80,
+				speed: 2 + speedFactor * 4 + Math.random() * 2,
+				ang: -(8 + Math.random() * 12),
+				op: 0.06 + Math.random() * 0.18 * speedFactor
+			});
+		}
+	}
+
+	/* ── UNIFIED ANIMATION LOOP (20 FPS) ── */
+	function startAnimLoop() {
+		cancelAnimationFrame(animId);
+		lastFrameTime = 0;
+
+		function step(now: number) {
+			if (now - lastFrameTime < 50) { animId = requestAnimationFrame(step); return; }
+			lastFrameTime = now;
+
+			const ctx = wxCanvas?.getContext('2d');
+			if (!ctx) { animId = requestAnimationFrame(step); return; }
+
+			const hasWork = drops.length > 0 || flakes.length > 0 || cStars.length > 0 ||
+				cFireflies.length > 0 || cMist.length > 0 || cWindStreaks.length > 0 || cShootStar.active;
+
+			if (hasWork) {
+				ctx.clearRect(0, 0, wxCanvas.width, wxCanvas.height);
+				const heavy = currentAnimType === 'storm';
+				if (currentAnimType === 'rain' || currentAnimType === 'storm') drawRain(ctx, heavy);
+				else if (currentAnimType === 'snow') drawSnow(ctx);
+				if (cStars.length) drawStarsCanvas(ctx, now);
+				if (cFireflies.length) drawFirefliesCanvas(ctx, now);
+				if (cMist.length) drawMistCanvas(ctx, now);
+				if (cWindStreaks.length) drawWindStreaksCanvas(ctx);
+				if (cShootStar.active) drawShootingStarCanvas(ctx);
+			}
+
+			// Shooting star scheduling
+			if (cStars.length && now > nextShootTime) {
+				const baseAng = 20 + Math.random() * 55;
+				const flip = Math.random() > 0.5 ? 1 : -1;
+				cShootStar = {
+					active: true,
+					x: (Math.random() * 80 + 5) * wxCanvas.width / 100,
+					y: (Math.random() * 55 + 3) * wxCanvas.height / 100,
+					ang: flip * baseAng, progress: 0, speed: 0.015 + Math.random() * 0.01
+				};
+				nextShootTime = now + 15000 + Math.random() * 20000;
+			}
+
+			// Celestial body repositioning (every 30s)
+			if (now - lastCelestialTime > 30000) {
+				lastCelestialTime = now;
+				positionCelestialBodies(_celestialData);
+			}
+
 			animId = requestAnimationFrame(step);
 		}
 		animId = requestAnimationFrame(step);
 	}
 
-	/* ── PARTICLES ── */
+	/* ── PARTICLES RESET ── */
 	function clearParticles() {
-		const p = el<HTMLDivElement>('wx-particles');
-		if (!p) return;
-		// remove everything except moon and sun-wrap
-		Array.from(p.children).forEach((ch) => {
-			const id = (ch as HTMLElement).id;
-			if (id !== 'wx-moon' && id !== 'wx-sun-wrap') ch.remove();
-		});
 		el<HTMLDivElement>('wx-moon')!.style.display = 'none';
 		el<HTMLDivElement>('wx-sun-wrap')!.style.display = 'none';
-	}
-
-	function buildStars() {
-		const p = el<HTMLDivElement>('wx-particles')!;
-		// Moon visibility/position is handled by positionCelestialBodies()
-		for (let i = 0; i < 20; i++) {
-			const s = document.createElement('div');
-			s.className = 'wx-star';
-			const sz = 0.5 + Math.random() * 2.4;
-			s.style.cssText = `width:${sz}px;height:${sz}px;left:${Math.random() * 100}vw;top:${Math.random() * 72}vh;opacity:${0.12 + Math.random() * 0.88};animation-duration:${1.5 + Math.random() * 5}s;animation-delay:-${Math.random() * 7}s;`;
-			p.appendChild(s);
-		}
-		clearTimeout(shootTimeout);
-		function shootStar() {
-			const s = document.createElement('div');
-			s.className = 'wx-shoot';
-			// Random direction: mostly downward-diagonal angles spread across a wide arc
-			const baseAng = 20 + Math.random() * 55; // 20-75° from horizontal
-			const flip = Math.random() > 0.5 ? 1 : -1; // left or right
-			const ang = flip * baseAng;
-			// Spawn anywhere in the upper 2/3 of screen
-			s.style.cssText = `left:${Math.random() * 80 + 5}vw;top:${Math.random() * 55 + 3}vh;--ang:${ang}deg;`;
-			p.appendChild(s);
-			setTimeout(() => s.remove(), 1400);
-			shootTimeout = setTimeout(shootStar, 7000 + Math.random() * 20000) as unknown as number;
-		}
-		shootTimeout = setTimeout(shootStar, 4000 + Math.random() * 9000) as unknown as number;
-	}
-
-	function buildFireflies() {
-		const p = el<HTMLDivElement>('wx-particles')!;
-		for (let i = 0; i < 5; i++) {
-			const f = document.createElement('div');
-			f.className = 'wx-ff';
-			f.style.left = `${8 + Math.random() * 84}vw`;
-			f.style.top = `${22 + Math.random() * 55}vh`;
-			f.style.setProperty('--d', `${3.5 + Math.random() * 6.5}s`);
-			f.style.setProperty('--p', `${2.2 + Math.random() * 4.2}s`);
-			f.style.setProperty('--dx', `${Math.random() * 130 - 65}px`);
-			f.style.setProperty('--dy', `${Math.random() * 90 - 45}px`);
-			f.style.animationDelay = `${-(Math.random() * 9)}s`;
-			p.appendChild(f);
-		}
-	}
-
-	function buildMist(r: number, g: number, b: number) {
-		const p = el<HTMLDivElement>('wx-particles')!;
-		for (let i = 0; i < 6; i++) {
-			const m = document.createElement('div');
-			m.className = 'wx-mist';
-			m.style.height = `${55 + Math.random() * 85}px`;
-			m.style.bottom = `${i * 6.5 + Math.random() * 10}vh`;
-			m.style.background = `rgba(${r},${g},${b},${0.024 + Math.random() * 0.036})`;
-			m.style.animationDuration = `${8 + Math.random() * 12}s`;
-			m.style.animationDelay = `${-(Math.random() * 10)}s`;
-			p.appendChild(m);
-		}
+		drops = []; flakes = [];
+		cStars = []; cFireflies = []; cMist = []; cWindStreaks = [];
+		cShootStar = { active: false, x: 0, y: 0, ang: 0, progress: 0, speed: 0 };
+		currentAnimType = '';
 	}
 
 	function buildLightning() {
@@ -751,9 +891,19 @@
 		lightningTimeout = setTimeout(strike, 800 + Math.random() * 2200) as unknown as number;
 	}
 
+	// Atmos gradients — merged into root background via JS (eliminates #atmos layer)
+	const ATMOS_GRADIENTS: Record<string, string> = {
+		night: 'radial-gradient(ellipse 80% 50% at 75% 8%,rgba(55,82,190,0.18) 0%,transparent 60%),radial-gradient(ellipse 100% 45% at 50% 0%,rgba(12,22,80,0.25) 0%,transparent 55%)',
+		day: 'radial-gradient(ellipse 120% 60% at 50% 0%,rgba(120,190,255,0.3) 0%,transparent 65%),radial-gradient(ellipse 80% 40% at 85% 20%,rgba(255,240,140,0.18) 0%,transparent 50%)',
+		rise: 'radial-gradient(ellipse 140% 60% at 22% 110%,rgba(230,95,30,0.55) 0%,transparent 52%),radial-gradient(ellipse 90% 58% at 72% 108%,rgba(165,40,70,0.28) 0%,transparent 50%)',
+		golden: 'radial-gradient(ellipse 140% 62% at 80% 112%,rgba(215,115,25,0.52) 0%,transparent 52%),radial-gradient(ellipse 70% 58% at 12% 110%,rgba(130,45,18,0.24) 0%,transparent 50%)',
+		sunset: 'radial-gradient(ellipse 125% 64% at 55% 114%,rgba(195,50,18,0.58) 0%,transparent 52%),radial-gradient(ellipse 78% 68% at 5% 112%,rgba(110,18,90,0.35) 0%,transparent 50%)',
+		rain: 'radial-gradient(ellipse 100% 65% at 50% 0%,rgba(22,50,95,0.28) 0%,transparent 65%)',
+		storm: 'radial-gradient(ellipse 100% 70% at 50% 0%,rgba(38,18,108,0.4) 0%,transparent 65%),radial-gradient(ellipse 80% 58% at 12% 100%,rgba(18,5,75,0.25) 0%,transparent 55%)',
+		snow: 'radial-gradient(ellipse 100% 58% at 50% 0%,rgba(120,165,230,0.14) 0%,transparent 60%)'
+	};
+
 	/* ── APPLY THEME ── */
-	// precipTheme: 'rain'|'storm'|'snow'|<skyTheme> — drives particles & condition label
-	// skyTheme:    always time-based — drives sky gradient, atmos, treeline, celestial bodies
 	function applyTheme(precipTheme: string, skyTheme: string, windSpeed = 0) {
 		_isPrecip = ['rain', 'storm', 'snow'].includes(precipTheme);
 
@@ -763,22 +913,28 @@
 			skyPrev.style.transition = 'none';
 			skyPrev.style.background = BG_GRADIENTS[_currentTheme];
 			skyPrev.style.opacity = '1';
+			skyPrev.style.display = 'block';
 			void skyPrev.offsetHeight;
 			skyPrev.style.transition = 'opacity 3s ease';
 			skyPrev.style.opacity = '0';
+			// Hide from compositor after fade completes
+			setTimeout(() => { if (skyPrev.style.opacity === '0') skyPrev.style.display = 'none'; }, 3200);
 		}
 		const themeChanged = _currentTheme !== '' && _currentTheme !== skyTheme;
 		_currentTheme = skyTheme;
 
 		const hasAlert = container.classList.contains('has-alert');
-		// Sky class drives CSS vars / atmos. Add is-precip for any precip-specific CSS.
 		container.className = `wx-root t-${skyTheme}${_isPrecip ? ' is-precip' : ''}${hasAlert ? ' has-alert' : ''}`;
 
-		// Condition label: show precip name when raining, otherwise sky theme name
+		// Merge atmos gradient + haze into root background (eliminates 2 compositor layers)
+		const skyGrad = BG_GRADIENTS[skyTheme] || BG_GRADIENTS['night'];
+		const atmosGrad = _isPrecip ? 'linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.45))' : (ATMOS_GRADIENTS[skyTheme] || '');
+		container.style.background = atmosGrad ? `${atmosGrad},${skyGrad}` : skyGrad;
+
 		const cond = el<HTMLDivElement>('wx-condition');
 		if (cond) cond.textContent = LABELS[precipTheme] || LABELS[skyTheme] || '';
 
-		// Treeline: always keyed off skyTheme so it matches the sky color
+		// Treeline
 		if (themeChanged && treeCanvas) {
 			treeCanvas.style.transition = 'filter 0.35s ease';
 			treeCanvas.style.filter = 'brightness(0)';
@@ -794,69 +950,46 @@
 				treeCanvas.style.filter = _isPrecip ? 'brightness(0.45)' : 'brightness(1)';
 			}
 		}
+
+		// Tree sway: skip animation entirely when wind < 3
+		if (treeCanvas) {
+			treeCanvas.style.animation = windSpeed < 3 ? 'none' : '';
+		}
+
 		cancelAnimationFrame(animId);
 		clearTimeout(lightningTimeout);
-		clearTimeout(shootTimeout);
 		const ctx = wxCanvas?.getContext('2d');
 		if (ctx) ctx.clearRect(0, 0, wxCanvas.width, wxCanvas.height);
 		el<SVGSVGElement>('wx-lightning-svg')!.style.display = 'none';
 		clearParticles();
 		applyParticlesAndLighting(precipTheme, skyTheme, windSpeed);
-		// Position sun and moon based on real time (after particles are set up)
 		positionCelestialBodies(_celestialData);
-	}
-
-	/* ── WIND STREAKS ── */
-	function buildWindStreaks(windSpeed: number) {
-		const p = el<HTMLDivElement>('wx-particles')!;
-		// Remove old streaks
-		Array.from(p.querySelectorAll('.wx-wind-streak')).forEach((e) => e.remove());
-		if (windSpeed < 5) return; // no visible streaks below 5 mph
-		const count = Math.round(Math.min(windSpeed / 5, 11)); // 1-11 streaks
-		const speedFactor = Math.min(windSpeed / 30, 1); // 0-1
-		for (let i = 0; i < count; i++) {
-			const w = document.createElement('div');
-			w.className = 'wx-wind-streak';
-			const len = 60 + Math.random() * 120 + speedFactor * 80;
-			const dur = (1.8 - speedFactor * 1.1 + Math.random() * 0.9).toFixed(2);
-			const ang = -(8 + Math.random() * 12); // slight downward-right angle
-			w.style.cssText = [
-				`top:${Math.random() * 90}vh`,
-				`left:${-10 + Math.random() * 80}vw`,
-				`width:${len}px`,
-				`--ws-dur:${dur}s`,
-				`--ws-ang:${ang}deg`,
-				`opacity:${(0.06 + Math.random() * 0.18 * speedFactor).toFixed(3)}`,
-				`animation-delay:-${(Math.random() * parseFloat(dur)).toFixed(2)}s`
-			].join(';');
-			p.appendChild(w);
-		}
+		startAnimLoop();
 	}
 
 	function applyParticlesAndLighting(precipTheme: string, skyTheme: string, windSpeed = 0) {
 		if (precipTheme === 'rain') {
+			currentAnimType = 'rain';
 			initRain(false);
-			animLoop('rain');
 		} else if (precipTheme === 'storm') {
+			currentAnimType = 'storm';
 			initRain(true);
-			animLoop('storm');
 			buildLightning();
 		} else if (precipTheme === 'snow') {
+			currentAnimType = 'snow';
 			initSnow();
-			animLoop('snow');
 		} else if (skyTheme === 'night') {
-			buildStars();
-			buildFireflies();
+			initStarsCanvas();
+			initFirefliesCanvas();
 		} else if (skyTheme === 'rise') {
-			buildMist(235, 142, 68);
+			initMistCanvas(235, 142, 68);
 		} else if (skyTheme === 'golden') {
-			buildMist(215, 132, 48);
+			initMistCanvas(215, 132, 48);
 		} else if (skyTheme === 'sunset') {
-			buildMist(195, 60, 30);
+			initMistCanvas(195, 60, 30);
 		}
-		// Wind streaks appear on top of any theme (skip during precip where rain/snow are already moving)
 		if (precipTheme !== 'rain' && precipTheme !== 'storm' && precipTheme !== 'snow') {
-			buildWindStreaks(windSpeed);
+			initWindStreaksCanvas(windSpeed);
 		}
 	}
 	function fetchAlerts(lat: number, lon: number) {
@@ -968,9 +1101,7 @@
 		if (w.uv != null) setSev('wx-d-uv', uvSev(w.uv));
 		if (typeof temp === 'number') setSev('wx-temp', tempSev(temp));
 
-		// ── Humidity haze ──
-		const hazeAlpha = w.humidity != null ? Math.max(0, (w.humidity - 40) / 60) * 0.2 : 0;
-		container.style.setProperty('--haze-alpha', hazeAlpha.toFixed(3));
+		// ── Humidity haze (merged into root background in applyTheme) ──
 
 		// ── UV → sun intensity boost ──
 		const uvFactor = w.uv != null ? Math.min(w.uv / 11, 1) : 0;
@@ -1005,12 +1136,13 @@
 		};
 		window.addEventListener('resize', onResize);
 		if (data) render(data);
+		// Initial celestial positioning
+		positionCelestialBodies(_celestialData);
 		return () => {
 			clearInterval(clockInterval);
 			window.removeEventListener('resize', onResize);
 			cancelAnimationFrame(animId);
 			clearTimeout(lightningTimeout);
-			clearTimeout(shootTimeout);
 		};
 	});
 
@@ -1020,20 +1152,10 @@
 	});
 </script>
 
-<svelte:head>
-	<link rel="preconnect" href="https://fonts.googleapis.com" />
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
-	<link
-		href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@900&family=Outfit:wght@200;300;400&display=swap"
-		rel="stylesheet"
-	/>
-</svelte:head>
-
 <div id="wx-root" class="wx-root" class:entering bind:this={container}>
 	<!-- sky cross-fade layer: holds the previous theme's gradient while fading out -->
 	<div id="wx-sky-prev"></div>
-	<div id="atmos"></div>
-	<div id="wx-haze"></div>
+	<!-- #atmos and #wx-haze removed — merged into root background via JS -->
 	<canvas id="wx-canvas" bind:this={wxCanvas}></canvas>
 	<canvas id="tree-canvas" bind:this={treeCanvas}></canvas>
 
@@ -1041,18 +1163,11 @@
 		<div id="wx-moon"></div>
 		<div id="wx-sun-wrap">
 			<div id="wx-sun-halo"></div>
-			<div id="wx-sun-corona"></div>
 			<div id="wx-sun-core"></div>
 		</div>
 	</div>
 
 	<svg id="wx-lightning-svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
-		<defs>
-			<filter id="wx-glow-f" x="-50%" y="-50%" width="200%" height="200%">
-				<feGaussianBlur stdDeviation="3" result="b" />
-				<feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-			</filter>
-		</defs>
 	</svg>
 	<div id="wx-lflash"></div>
 	<div id="wx-alert-bar"></div>
@@ -1205,6 +1320,7 @@
 		z-index: 0;
 		pointer-events: none;
 		opacity: 0;
+		display: none; /* hidden from compositor when not cross-fading */
 	}
 
 	:global(.wx-root) {
@@ -1215,66 +1331,9 @@
 		background: linear-gradient(165deg, var(--bg0) 0%, var(--bg1) 100%);
 		color: var(--text);
 		position: relative;
+		contain: strict;
 	}
-
-	/* ── ATMOS ── */
-	:global(#atmos) {
-		position: fixed;
-		inset: 0;
-		pointer-events: none;
-		z-index: 1;
-		transition:
-			opacity 2s,
-			background 2s;
-	}
-	:global(.wx-root.t-night #atmos) {
-		background:
-			radial-gradient(ellipse 80% 50% at 75% 8%, rgba(55, 82, 190, 0.18) 0%, transparent 60%),
-			radial-gradient(ellipse 100% 45% at 50% 0%, rgba(12, 22, 80, 0.25) 0%, transparent 55%);
-	}
-	:global(.wx-root.t-day #atmos) {
-		background:
-			radial-gradient(ellipse 120% 60% at 50% 0%, rgba(120, 190, 255, 0.3) 0%, transparent 65%),
-			radial-gradient(ellipse 80% 40% at 85% 20%, rgba(255, 240, 140, 0.18) 0%, transparent 50%);
-	}
-	:global(.wx-root.t-rise #atmos) {
-		background:
-			radial-gradient(ellipse 140% 60% at 22% 110%, rgba(230, 95, 30, 0.55) 0%, transparent 52%),
-			radial-gradient(ellipse 90% 58% at 72% 108%, rgba(165, 40, 70, 0.28) 0%, transparent 50%);
-	}
-	:global(.wx-root.t-golden #atmos) {
-		background:
-			radial-gradient(ellipse 140% 62% at 80% 112%, rgba(215, 115, 25, 0.52) 0%, transparent 52%),
-			radial-gradient(ellipse 70% 58% at 12% 110%, rgba(130, 45, 18, 0.24) 0%, transparent 50%);
-	}
-	:global(.wx-root.t-sunset #atmos) {
-		background:
-			radial-gradient(ellipse 125% 64% at 55% 114%, rgba(195, 50, 18, 0.58) 0%, transparent 52%),
-			radial-gradient(ellipse 78% 68% at 5% 112%, rgba(110, 18, 90, 0.35) 0%, transparent 50%);
-	}
-	:global(.wx-root.t-rain #atmos) {
-		background: radial-gradient(
-			ellipse 100% 65% at 50% 0%,
-			rgba(22, 50, 95, 0.28) 0%,
-			transparent 65%
-		);
-	}
-	:global(.wx-root.t-storm #atmos) {
-		background:
-			radial-gradient(ellipse 100% 70% at 50% 0%, rgba(38, 18, 108, 0.4) 0%, transparent 65%),
-			radial-gradient(ellipse 80% 58% at 12% 100%, rgba(18, 5, 75, 0.25) 0%, transparent 55%);
-	}
-	:global(.wx-root.t-snow #atmos) {
-		background: radial-gradient(
-			ellipse 100% 58% at 50% 0%,
-			rgba(120, 165, 230, 0.14) 0%,
-			transparent 60%
-		);
-	}
-	/* Darken the sky during any precipitation — overlaid on top of the time-of-day atmos */
-	:global(.wx-root.is-precip #atmos) {
-		background: rgba(0, 0, 0, 0.45);
-	}
+	/* #atmos removed — gradient merged into root background via JS */
 
 	/* ── CANVAS ── */
 	:global(#wx-canvas) {
@@ -1282,7 +1341,6 @@
 		inset: 0;
 		pointer-events: none;
 		z-index: 2;
-		will-change: transform;
 	}
 	:global(#tree-canvas) {
 		position: fixed;
@@ -1291,7 +1349,6 @@
 		width: calc(100% + 40px);
 		pointer-events: none;
 		z-index: 5;
-		will-change: transform;
 	}
 	:global(.wx-root.is-precip #tree-canvas) {
 		filter: brightness(0.45);
@@ -1302,92 +1359,9 @@
 		inset: 0;
 		pointer-events: none;
 		z-index: 3;
-		overflow: hidden;
 	}
-
-	/* ── STARS ── */
-	:global(.wx-star) {
-		position: absolute;
-		border-radius: 50%;
-		background: #d8eaff;
-		animation: wx-star-pulse ease-in-out infinite;
-	}
-	@keyframes wx-star-pulse {
-		0%,
-		100% {
-			opacity: 1;
-			transform: scale(1);
-		}
-		50% {
-			opacity: 0.05;
-			transform: scale(0.2);
-		}
-	}
-	:global(.wx-shoot) {
-		position: absolute;
-		width: 160px;
-		height: 1.5px;
-		background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), transparent);
-		transform-origin: left center;
-		animation: wx-shoot-fly 1.4s ease-out forwards;
-	}
-	@keyframes wx-shoot-fly {
-		0% {
-			opacity: 0;
-			transform: rotate(var(--ang, 30deg)) scaleX(0);
-		}
-		15% {
-			opacity: 1;
-		}
-		100% {
-			opacity: 0;
-			transform: rotate(var(--ang, 30deg)) scaleX(1) translateX(35vw);
-		}
-	}
-
-	/* ── WIND STREAKS ── */
-	:global(.wx-wind-streak) {
-		position: absolute;
-		height: 1px;
-		border-radius: 1px;
-		background: linear-gradient(
-			90deg,
-			transparent 0%,
-			rgba(200, 225, 255, 0.75) 40%,
-			transparent 100%
-		);
-		pointer-events: none;
-		transform-origin: left center;
-		transform: rotate(var(--ws-ang, 0deg));
-		animation: wx-wind-blow var(--ws-dur, 2s) linear infinite;
-	}
-	@keyframes wx-wind-blow {
-		0% {
-			transform: rotate(var(--ws-ang, 0deg)) translateX(-20vw);
-			opacity: 0;
-		}
-		10% {
-			opacity: 1;
-		}
-		80% {
-			opacity: 0.9;
-		}
-		100% {
-			transform: rotate(var(--ws-ang, 0deg)) translateX(110vw);
-			opacity: 0;
-		}
-	}
-
-	/* ── HUMIDITY HAZE ── */
-	:global(#wx-haze) {
-		position: fixed;
-		inset: 0;
-		z-index: 4;
-		pointer-events: none;
-		/* backdrop-filter removed — too GPU-expensive on low-power devices */
-		background: rgba(180, 205, 230, var(--haze-alpha, 0));
-		transition: background 3s ease;
-	}
+	/* Stars, fireflies, mist, wind streaks, shooting stars all canvas-rendered now */
+	/* #wx-haze removed — merged into root background */
 
 	/* ── UV SUN BOOST ── */
 	:global(#wx-sun-core) {
@@ -1452,115 +1426,19 @@
 		transition: opacity 2s ease;
 	}
 
-	/* ── FIREFLIES ── */
-	:global(.wx-ff) {
-		position: absolute;
-		width: 3px;
-		height: 3px;
-		border-radius: 50%;
-		background: rgba(165, 220, 70, 0.75);
-		animation:
-			wx-ff-drift var(--d, 11s) ease-in-out infinite alternate,
-			wx-ff-pulse var(--p, 7s) ease-in-out infinite;
-	}
-	@keyframes wx-ff-drift {
-		from {
-			transform: translate(0, 0);
-		}
-		to {
-			transform: translate(var(--dx, 40px), var(--dy, 28px));
-		}
-	}
-	@keyframes wx-ff-pulse {
-		0%,
-		18%,
-		82%,
-		100% {
-			opacity: 0;
-		}
-		42%,
-		58% {
-			opacity: 1;
-		}
-	}
+	/* Fireflies, mist now canvas-rendered */
 
-	/* ── SUN ── */
+	/* ── SUN (no blur, no corona, no breathe animation) ── */
 	:global(#wx-sun-core) {
 		width: clamp(60px, 11vw, 105px);
 		height: clamp(60px, 11vw, 105px);
 		border-radius: 50%;
-		background: radial-gradient(circle, #fff8c0 0%, #ffd840 45%, rgba(255, 180, 0, 0) 72%);
-		filter: blur(2px);
+		/* Softness baked into gradient — no filter: blur() needed */
+		background: radial-gradient(circle, #fff8c0 0%, #ffd840 35%, rgba(255,200,0,0.15) 55%, rgba(255,180,0,0) 72%);
 		position: relative;
 		z-index: 2;
-		animation: wx-sun-breathe 4s ease-in-out infinite;
 	}
-	@keyframes wx-sun-breathe {
-		0%,
-		100% {
-			transform: scale(1);
-		}
-		50% {
-			transform: scale(1.07);
-			opacity: 1.1;
-		}
-	}
-	:global(#wx-sun-corona) {
-		position: absolute;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		width: clamp(110px, 22vw, 200px);
-		height: clamp(110px, 22vw, 200px);
-		border-radius: 50%;
-		background: conic-gradient(
-			rgba(255, 225, 80, 0.22) 0deg,
-			rgba(255, 225, 80, 0.04) 10deg,
-			rgba(255, 225, 80, 0.22) 20deg,
-			rgba(255, 225, 80, 0.04) 30deg,
-			rgba(255, 225, 80, 0.22) 40deg,
-			rgba(255, 225, 80, 0.04) 50deg,
-			rgba(255, 225, 80, 0.22) 60deg,
-			rgba(255, 225, 80, 0.04) 70deg,
-			rgba(255, 225, 80, 0.22) 80deg,
-			rgba(255, 225, 80, 0.04) 90deg,
-			rgba(255, 225, 80, 0.22) 100deg,
-			rgba(255, 225, 80, 0.04) 110deg,
-			rgba(255, 225, 80, 0.22) 120deg,
-			rgba(255, 225, 80, 0.04) 130deg,
-			rgba(255, 225, 80, 0.22) 140deg,
-			rgba(255, 225, 80, 0.04) 150deg,
-			rgba(255, 225, 80, 0.22) 160deg,
-			rgba(255, 225, 80, 0.04) 170deg,
-			rgba(255, 225, 80, 0.22) 180deg,
-			rgba(255, 225, 80, 0.04) 190deg,
-			rgba(255, 225, 80, 0.22) 200deg,
-			rgba(255, 225, 80, 0.04) 210deg,
-			rgba(255, 225, 80, 0.22) 220deg,
-			rgba(255, 225, 80, 0.04) 230deg,
-			rgba(255, 225, 80, 0.22) 240deg,
-			rgba(255, 225, 80, 0.04) 250deg,
-			rgba(255, 225, 80, 0.22) 260deg,
-			rgba(255, 225, 80, 0.04) 270deg,
-			rgba(255, 225, 80, 0.22) 280deg,
-			rgba(255, 225, 80, 0.04) 290deg,
-			rgba(255, 225, 80, 0.22) 300deg,
-			rgba(255, 225, 80, 0.04) 310deg,
-			rgba(255, 225, 80, 0.22) 320deg,
-			rgba(255, 225, 80, 0.04) 330deg,
-			rgba(255, 225, 80, 0.22) 340deg,
-			rgba(255, 225, 80, 0.22) 350deg,
-			rgba(255, 225, 80, 0.04) 360deg
-		);
-		filter: blur(8px);
-		animation: wx-ray-spin 50s linear infinite;
-		z-index: 1;
-	}
-	@keyframes wx-ray-spin {
-		to {
-			transform: translate(-50%, -50%) rotate(360deg);
-		}
-	}
+	/* Corona replaced with simple radial glow — no conic-gradient, no blur, no rotation */
 	:global(#wx-sun-halo) {
 		position: absolute;
 		top: 50%;
@@ -1571,29 +1449,11 @@
 		border-radius: 50%;
 		background: radial-gradient(
 			circle,
-			rgba(255, 230, 80, 0.22) 0%,
-			rgba(255, 200, 40, 0.08) 45%,
+			rgba(255, 225, 80, 0.20) 0%,
+			rgba(255, 220, 60, 0.08) 40%,
 			transparent 70%
 		);
-		animation: wx-sun-breathe 10s ease-in-out infinite;
 		z-index: 0;
-	}
-
-	/* ── MIST ── */
-	:global(.wx-mist) {
-		position: absolute;
-		left: -15%;
-		width: 130%;
-		border-radius: 50%;
-		animation: wx-mist-flow ease-in-out infinite alternate;
-	}
-	@keyframes wx-mist-flow {
-		from {
-			transform: translateX(0);
-		}
-		to {
-			transform: translateX(30px);
-		}
 	}
 
 	/* ── LIGHTNING ── */
@@ -1605,10 +1465,10 @@
 		display: none;
 	}
 	:global(.wx-bolt) {
-		stroke: rgba(220, 210, 255, 0.92);
-		stroke-width: 2;
+		stroke: rgba(235, 225, 255, 0.95);
+		stroke-width: 3;
 		fill: none;
-		filter: url(#wx-glow-f);
+		/* filter: url(#wx-glow-f) removed — faked with thicker stroke + brighter color */
 	}
 	:global(.wx-bolt-thin) {
 		stroke: rgba(255, 255, 255, 0.45);

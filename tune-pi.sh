@@ -35,10 +35,20 @@ set_boot() {
 
 # ── 1. GPU memory ─────────────────────────────────────────────────────────────
 # More VRAM for smoother canvas/CSS rendering. Default is 76MB — too low.
-info "Setting GPU memory to 128MB..."
-set_boot gpu_mem 128
+info "Setting GPU memory to 256MB..."
+set_boot gpu_mem 256
 
-# ── 2. HDMI & display ─────────────────────────────────────────────────────────
+# ── 2. VC4 GPU driver ──────────────────────────────────────────────────────
+# Enable open-source VC4 driver with KMS for proper hardware compositing.
+info "Enabling VC4 GPU driver (FKMS)..."
+if ! grep -q "^dtoverlay=vc4-fkms-v3d" "${BOOT_CFG}"; then
+    echo "dtoverlay=vc4-fkms-v3d" >> "${BOOT_CFG}"
+    info "  Added vc4-fkms-v3d overlay"
+else
+    info "  vc4-fkms-v3d overlay already present"
+fi
+
+# ── 3. HDMI & display ─────────────────────────────────────────────────────────
 info "Configuring HDMI..."
 set_boot disable_overscan 1       # Remove black border
 set_boot hdmi_force_hotplug 1     # Always output HDMI even without monitor at boot
@@ -49,7 +59,7 @@ if ! grep -q "consoleblank=0" "${BOOT_CMD}"; then
     info "Disabled console blanking"
 fi
 
-# ── 3. Disable unused services ────────────────────────────────────────────────
+# ── 4. Disable unused services ────────────────────────────────────────────────
 info "Disabling unused services..."
 DISABLE_SERVICES=(
     bluetooth
@@ -65,7 +75,7 @@ for svc in "${DISABLE_SERVICES[@]}"; do
     fi
 done
 
-# ── 4. CPU performance governor ───────────────────────────────────────────────
+# ── 5. CPU performance governor ───────────────────────────────────────────────
 info "Locking CPU governor to 'performance'..."
 cat > /etc/systemd/system/cpu-performance.service <<'EOF'
 [Unit]
@@ -84,28 +94,61 @@ systemctl daemon-reload
 systemctl enable --now cpu-performance
 info "  CPU governor locked to performance"
 
-# ── 5. Reduce swappiness ──────────────────────────────────────────────────────
+# ── 6. Reduce swappiness ──────────────────────────────────────────────────────
 # Don't disable swap entirely, but tell the kernel to avoid it aggressively.
 # Swapping to SD card mid-animation causes visible stutters.
 info "Setting swappiness to 10..."
 echo "vm.swappiness=10" > /etc/sysctl.d/99-kiosk.conf
 sysctl -w vm.swappiness=10 > /dev/null
 
-# ── 6. /tmp on RAM (Removed) ────────────────────────────────────────────────
-# Limiting /tmp to 64MB on a tmpfs crashes Chromium rapidly when loading large
-# resources like the radar loop. Let the OS use the SD card for /tmp.
+# ── 7. zram compressed swap ─────────────────────────────────────────────────
+# 1GB RAM is tight. zram gives ~50% more effective memory without SD card thrash.
+info "Setting up zram swap..."
+if ! command -v zramctl &>/dev/null; then
+    apt-get install -y zram-tools 2>/dev/null || true
+fi
+
+cat > /etc/systemd/system/zram-swap.service <<'ZEOF'
+[Unit]
+Description=Configure zram swap
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '\
+    modprobe zram && \
+    zramctl /dev/zram0 --algorithm lz4 --size $(( $(grep MemTotal /proc/meminfo | awk "{print \\$2}") / 2 ))K && \
+    mkswap /dev/zram0 && \
+    swapon -p 100 /dev/zram0'
+ExecStop=/bin/bash -c 'swapoff /dev/zram0 && zramctl --reset /dev/zram0'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+ZEOF
+systemctl daemon-reload
+systemctl enable zram-swap
+info "  zram swap service installed"
+
+# Disable SD card swap — zram replaces it
+if systemctl is-enabled dphys-swapfile 2>/dev/null; then
+    systemctl disable --now dphys-swapfile 2>/dev/null || true
+    info "  Disabled dphys-swapfile (SD card swap)"
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  Done! Reboot to apply boot config changes.          ║${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║   ✓ GPU memory → 128 MB                             ║${NC}"
+echo -e "${GREEN}║   ✓ GPU memory → 256 MB                             ║${NC}"
+echo -e "${GREEN}║   ✓ VC4 GPU driver enabled                          ║${NC}"
 echo -e "${GREEN}║   ✓ HDMI force hotplug + no overscan                ║${NC}"
 echo -e "${GREEN}║   ✓ Console blanking disabled                       ║${NC}"
 echo -e "${GREEN}║   ✓ 7 background services disabled                  ║${NC}"
 echo -e "${GREEN}║   ✓ CPU governor → performance                      ║${NC}"
 echo -e "${GREEN}║   ✓ Swappiness → 10 (avoids SD card thrash)        ║${NC}"
-echo -e "${GREEN}║   ✓ /tmp on RAM (64MB tmpfs)                       ║${NC}"
+echo -e "${GREEN}║   ✓ zram swap (compressed RAM)                      ║${NC}"
+echo -e "${GREEN}║   ✓ SD card swap disabled                           ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 
