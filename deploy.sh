@@ -42,8 +42,9 @@ info "Running as:   ${CURRENT_USER}"
 
 # ── 1. System packages ────────────────────────────────────────────────────────
 info "Installing system packages..."
-sudo apt-get update -qq
-sudo apt-get install -y curl git unclutter --no-install-recommends
+sudo apt-get update
+sudo apt-get install -y git curl unclutter \
+    python3 python3-requests --no-install-recommends
 
 # Chromium package name changed in Pi OS Bookworm (2023+)
 if apt-cache show chromium &>/dev/null; then
@@ -97,6 +98,9 @@ sudo -u "${CURRENT_USER}" bash --login -c "
     pnpm install --frozen-lockfile
 "
 
+info "Stopping service during build..."
+sudo systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+
 info "Building SvelteKit app..."
 sudo -u "${CURRENT_USER}" bash --login -c "
     export NVM_DIR='${NVM_DIR}'
@@ -117,8 +121,7 @@ Type=simple
 User=${CURRENT_USER}
 WorkingDirectory=${APP_DIR}/svelte/build
 Environment=PORT=${APP_PORT}
-ExecStartPre=-/usr/bin/env python3 ${APP_DIR}/sync.py &
-ExecStart=/usr/bin/env python3 -m http.server ${APP_PORT}
+ExecStart=/usr/bin/env bash -c 'python3 ${APP_DIR}/sync.py & python3 -m http.server ${APP_PORT}'
 Restart=on-failure
 RestartSec=5
 
