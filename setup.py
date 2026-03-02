@@ -2,6 +2,7 @@
 import subprocess
 import sys
 import os
+import time
 
 def main():
     print("==================================================")
@@ -19,8 +20,7 @@ def main():
     print("    This step configures GPU memory, swap, and CPU performance.")
     try:
         # We run tune-pi.sh with sudo. 
-        # Pass "n\n" via stdin so we automatically decline the reboot prompt
-        subprocess.run(["sudo", "./tune-pi.sh"], input=b"n\n", check=True)
+        subprocess.run(["sudo", "./tune-pi.sh"], check=True)
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] tune-pi.sh failed with exit code {e.returncode}")
         sys.exit(1)
@@ -35,8 +35,15 @@ def main():
 
     print("\n==================================================")
     print(" Setup Complete! ")
-    print(" You can now reboot the Raspberry Pi to test the kiosk.")
+    print(" Rebooting Raspberry Pi in 10 seconds to apply changes...")
     print("==================================================")
+    
+    for i in range(10, 0, -1):
+        print(f"Rebooting in {i}...")
+        time.sleep(1)
+        
+    print("Rebooting now!")
+    subprocess.run(["sudo", "reboot"])
 
 if __name__ == "__main__":
     main()

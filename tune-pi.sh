@@ -109,6 +109,3 @@ echo -e "${GREEN}║   ✓ Swappiness → 10 (avoids SD card thrash)        ║$
 echo -e "${GREEN}║   ✓ /tmp on RAM (64MB tmpfs)                       ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 
-echo ""
-read -rp "Reboot now? [y/N] " ans
-[[ "${ans,,}" == y ]] && reboot
