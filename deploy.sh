@@ -157,21 +157,27 @@ for i in \$(seq 1 30); do
     sleep 1
 done
 
-exec "\${CHROMIUM}" \\
-    --kiosk \\
-    --noerr \\
-    --disable-infobars \\
-    --no-first-run \\
-    --disable-restore-session-state \\
-    --disable-session-crashed-bubble \\
-    --disable-translate \\
-    --disable-features=TranslateUI \\
-    --check-for-update-interval=31536000 \\
-    --ozone-platform-hint=auto \\
-    --enable-gpu-rasterization \\
-    --enable-zero-copy \\
-    --num-raster-threads=2 \\
-    "\${URL}"
+while true; do
+    "\${CHROMIUM}" \\
+        --kiosk \
+        --disable-dev-shm-usage \\
+        --password-store=basic \\
+        --noerr \\
+        --disable-infobars \\
+        --no-first-run \\
+        --disable-restore-session-state \\
+        --disable-session-crashed-bubble \\
+        --disable-translate \\
+        --disable-features=TranslateUI \\
+        --check-for-update-interval=31536000 \\
+        --ozone-platform-hint=auto \\
+        --enable-gpu-rasterization \\
+        --enable-zero-copy \\
+        --num-raster-threads=2 \\
+        "\${URL}"
+    # If Chromium crashes, wait a moment and then loop back to restart it
+    sleep 3
+done
 EOF
 chmod +x "${LAUNCH_SCRIPT}"
 

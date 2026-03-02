@@ -91,11 +91,9 @@ info "Setting swappiness to 10..."
 echo "vm.swappiness=10" > /etc/sysctl.d/99-kiosk.conf
 sysctl -w vm.swappiness=10 > /dev/null
 
-# ── 6. /tmp on RAM ────────────────────────────────────────────────────────────
-if ! grep -q "tmpfs /tmp" /etc/fstab; then
-    echo "tmpfs /tmp tmpfs defaults,noatime,nosuid,size=64m 0 0" >> /etc/fstab
-    info "Mounted /tmp as tmpfs (64MB RAM)"
-fi
+# ── 6. /tmp on RAM (Removed) ────────────────────────────────────────────────
+# Limiting /tmp to 64MB on a tmpfs crashes Chromium rapidly when loading large
+# resources like the radar loop. Let the OS use the SD card for /tmp.
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""

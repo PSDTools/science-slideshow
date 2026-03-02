@@ -183,7 +183,7 @@
 <div class="root">
 	{#each slides as slide, i}
 		<div class="slide" class:active={i === current}>
-			{#if Math.abs(i - current) <= 1 || (i === 0 && current === slides.length - 1) || (i === slides.length - 1 && current === 0)}
+			{#if i === current}
 				{#if slide.type === 'image'}
 					<img src={slide.url} alt="" />
 				{:else if slide.type === 'radar'}
@@ -248,6 +248,7 @@
 		width: 100%;
 		height: 100%;
 		object-fit: contain;
+		image-rendering: pixelated;
 	}
 
 	.loading {
