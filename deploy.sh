@@ -160,8 +160,6 @@ done
 while true; do
     "\${CHROMIUM}" \\
         --kiosk \\
-        --incognito \\
-        --user-data-dir=/tmp/kiosk-profile \\
         --disable-dev-shm-usage \\
         --password-store=basic \\
         --noerr \\
@@ -170,12 +168,9 @@ while true; do
         --disable-restore-session-state \\
         --disable-session-crashed-bubble \\
         --disable-translate \\
-        --disable-features=TranslateUI \\
-        --check-for-update-interval=31536000 \\
-        --ozone-platform-hint=auto \\
-        --enable-gpu-rasterization \\
-        --enable-zero-copy \\
-        --num-raster-threads=2 \\
+        --disable-features=TranslateUI \
+        --check-for-update-interval=31536000 \
+        --ozone-platform-hint=auto \
         "\${URL}"
     # If Chromium crashes, wait a moment and then loop back to restart it
     sleep 3
