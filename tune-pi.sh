@@ -39,8 +39,17 @@ info "Setting GPU memory to 256MB..."
 set_boot gpu_mem 256
 
 # ── 2. VC4 GPU driver ──────────────────────────────────────────────────────
-# Enable open-source VC4 driver with KMS for proper hardware compositing.
+# Use FKMS (not full KMS) for Pi 3 compatibility. Remove vc4-kms-v3d if present.
 info "Enabling VC4 GPU driver (FKMS)..."
+if grep -q "^dtoverlay=vc4-kms-v3d" "${BOOT_CFG}"; then
+    sed -i 's/^dtoverlay=vc4-kms-v3d/# dtoverlay=vc4-kms-v3d  # disabled for Pi 3/' "${BOOT_CFG}"
+    info "  Disabled vc4-kms-v3d (conflicts with fkms)"
+fi
+# Also remove disable_fw_kms_setup (only needed for full KMS)
+if grep -q "^disable_fw_kms_setup=" "${BOOT_CFG}"; then
+    sed -i 's/^disable_fw_kms_setup=/#disable_fw_kms_setup=/' "${BOOT_CFG}"
+    info "  Disabled disable_fw_kms_setup"
+fi
 if ! grep -q "^dtoverlay=vc4-fkms-v3d" "${BOOT_CFG}"; then
     echo "dtoverlay=vc4-fkms-v3d" >> "${BOOT_CFG}"
     info "  Added vc4-fkms-v3d overlay"

@@ -6,7 +6,7 @@ node_modules
 .netlify
 .wrangler
 /.svelte-kit
-/build
+# /build  — committed so Pi can git pull without needing Node.js
 
 # OS
 .DS_Store

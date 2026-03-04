@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# deploy.sh — Raspberry Pi deployment script for the Slideshow app
+# deploy.sh — FullPageOS deployment script for the Slideshow kiosk
+#
+# Assumes FullPageOS is already flashed and booted. Run this on the Pi via SSH.
 #
 # What this does:
-#   1. Installs Node.js (via nvm), pnpm, and Chromium
-#   2. Builds the SvelteKit app for production
-#   3. Installs a systemd service so the app starts on boot
-#   4. Installs a desktop autostart entry so Chromium opens in kiosk mode
+#   1. Installs Node.js (via nvm) and pnpm
+#   2. Builds the SvelteKit static app
+#   3. Installs a systemd service (HTTP server + sync.py)
+#   4. Configures FullPageOS to point at the app
+#   5. Injects Pi 3 GPU-optimized Chromium flags
 #
 # Usage:
 #   chmod +x deploy.sh
@@ -43,20 +46,7 @@ info "Running as:   ${CURRENT_USER}"
 # ── 1. System packages ────────────────────────────────────────────────────────
 info "Installing system packages..."
 sudo apt-get update
-sudo apt-get install -y git curl unclutter \
-    python3 python3-requests --no-install-recommends
-
-# Chromium package name changed in Pi OS Bookworm (2023+)
-if apt-cache show chromium &>/dev/null; then
-    sudo apt-get install -y chromium --no-install-recommends
-    CHROMIUM_BIN="chromium"
-elif apt-cache show chromium-browser &>/dev/null; then
-    sudo apt-get install -y chromium-browser --no-install-recommends
-    CHROMIUM_BIN="chromium-browser"
-else
-    abort "Neither 'chromium' nor 'chromium-browser' found in apt. Install Chromium manually."
-fi
-info "Chromium binary: ${CHROMIUM_BIN}"
+sudo apt-get install -y git curl python3 python3-requests --no-install-recommends
 
 # ── 2. Node.js via nvm ───────────────────────────────────────────────────────
 NVM_DIR="${USER_HOME}/.nvm"
@@ -66,7 +56,6 @@ if [[ ! -d "${NVM_DIR}" ]]; then
         "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
 fi
 
-# Source nvm in this script
 export NVM_DIR="${NVM_DIR}"
 # shellcheck source=/dev/null
 source "${NVM_DIR}/nvm.sh"
@@ -80,7 +69,6 @@ sudo -u "${CURRENT_USER}" bash --login -c "
     npm install -g pnpm --silent
 "
 
-# Resolve the node/pnpm binaries installed by nvm
 NODE_BIN=$(sudo -u "${CURRENT_USER}" bash --login -c \
     "export NVM_DIR='${NVM_DIR}'; source '${NVM_DIR}/nvm.sh'; nvm which current")
 NODE_DIR="$(dirname "${NODE_BIN}")"
@@ -132,70 +120,52 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable "${SERVICE_NAME}"
 sudo systemctl restart "${SERVICE_NAME}"
-info "Service started. Check with: sudo systemctl status ${SERVICE_NAME}"
+info "Service started."
 
-# ── 5. Desktop autostart (kiosk launcher) ──────────────────────────────────
-info "Installing kiosk autostart..."
+# ── 5. Configure FullPageOS ──────────────────────────────────────────────────
+FPOS_TXT="/boot/firmware/fullpageos.txt"
+if [[ -f "${FPOS_TXT}" ]]; then
+    info "Setting FullPageOS URL → ${KIOSK_URL}"
+    echo "${KIOSK_URL}" | sudo tee "${FPOS_TXT}" > /dev/null
+elif [[ -f "/boot/fullpageos.txt" ]]; then
+    # Older FullPageOS versions use /boot/ directly
+    FPOS_TXT="/boot/fullpageos.txt"
+    info "Setting FullPageOS URL → ${KIOSK_URL} (legacy path)"
+    echo "${KIOSK_URL}" | sudo tee "${FPOS_TXT}" > /dev/null
+else
+    warn "fullpageos.txt not found — is this FullPageOS?"
+fi
 
-LAUNCHER="${APP_DIR}/wait-and-launch.sh"
-chmod +x "${LAUNCHER}"
-
-# ── labwc (Raspberry Pi OS Bookworm default Wayland compositor) ────────────
-LABWC_DIR="${USER_HOME}/.config/labwc"
-sudo -u "${CURRENT_USER}" mkdir -p "${LABWC_DIR}"
-sudo -u "${CURRENT_USER}" tee "${LABWC_DIR}/autostart" > /dev/null <<EOF
-# Slideshow kiosk
-${LAUNCHER} ${KIOSK_URL} &
-EOF
-info "  labwc autostart → ${LABWC_DIR}/autostart"
-
-# ── wayfire ────────────────────────────────────────────────────────────────
-WAYFIRE_DIR="${USER_HOME}/.config/wayfire"
-sudo -u "${CURRENT_USER}" mkdir -p "${WAYFIRE_DIR}"
-WAYFIRE_INI="${WAYFIRE_DIR}/wayfire.ini"
-if [[ -f "${WAYFIRE_INI}" ]]; then
-    # Append autostart if not already present
-    if ! grep -q "wait-and-launch" "${WAYFIRE_INI}"; then
-        sudo -u "${CURRENT_USER}" tee -a "${WAYFIRE_INI}" > /dev/null <<EOF
-
-[autostart]
-slideshow = ${LAUNCHER} ${KIOSK_URL}
-EOF
+# ── 6. Inject Pi 3 GPU-optimized Chromium flags ─────────────────────────────
+CHROMIUM_SCRIPT="/opt/custompios/scripts/start_chromium_browser"
+if [[ -f "${CHROMIUM_SCRIPT}" ]]; then
+    info "Injecting Pi 3 GPU flags into Chromium launcher..."
+    # Check if we already patched it
+    if ! grep -q "enable-gpu-rasterization" "${CHROMIUM_SCRIPT}"; then
+        sudo sed -i '/^flags=(/,/)/ {
+            /)/i\
+   --enable-gpu-rasterization\
+   --enable-zero-copy\
+   --ignore-gpu-blocklist\
+   --num-raster-threads=2\
+   --use-gl=egl\
+   --disable-smooth-scrolling\
+   --disable-low-res-tiling\
+   --disable-dev-shm-usage
+        }' "${CHROMIUM_SCRIPT}"
+        info "  GPU flags injected"
+    else
+        info "  GPU flags already present"
     fi
 else
-    sudo -u "${CURRENT_USER}" tee "${WAYFIRE_INI}" > /dev/null <<EOF
-[autostart]
-slideshow = ${LAUNCHER} ${KIOSK_URL}
-EOF
+    warn "Chromium launcher not found at ${CHROMIUM_SCRIPT}"
 fi
-info "  wayfire autostart → ${WAYFIRE_INI}"
 
-# ── LXDE (legacy Pi OS) ───────────────────────────────────────────────────
-LXDE_DIR="${USER_HOME}/.config/lxsession/LXDE-pi"
-sudo -u "${CURRENT_USER}" mkdir -p "${LXDE_DIR}"
-LXDE_AUTO="${LXDE_DIR}/autostart"
-if [[ -f "${LXDE_AUTO}" ]]; then
-    if ! grep -q "wait-and-launch" "${LXDE_AUTO}"; then
-        echo "@${LAUNCHER} ${KIOSK_URL}" | sudo -u "${CURRENT_USER}" tee -a "${LXDE_AUTO}" > /dev/null
-    fi
-else
-    sudo -u "${CURRENT_USER}" tee "${LXDE_AUTO}" > /dev/null <<EOF
-@${LAUNCHER} ${KIOSK_URL}
-EOF
+# ── 7. Run system tuning ────────────────────────────────────────────────────
+if [[ -f "${APP_DIR}/tune-pi.sh" ]]; then
+    info "Running system tuning..."
+    sudo bash "${APP_DIR}/tune-pi.sh"
 fi
-info "  LXDE autostart → ${LXDE_AUTO}"
-
-# ── XDG autostart (fallback for other DEs) ────────────────────────────────
-XDG_DIR="${USER_HOME}/.config/autostart"
-sudo -u "${CURRENT_USER}" mkdir -p "${XDG_DIR}"
-sudo -u "${CURRENT_USER}" tee "${XDG_DIR}/slideshow-kiosk.desktop" > /dev/null <<EOF
-[Desktop Entry]
-Type=Application
-Name=Slideshow Kiosk
-Exec=${LAUNCHER} ${KIOSK_URL}
-X-GNOME-Autostart-enabled=true
-EOF
-info "  XDG autostart → ${XDG_DIR}/slideshow-kiosk.desktop"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
@@ -205,6 +175,6 @@ echo -e "${GREEN}╠════════════════════
 echo -e "${GREEN}║  App URL:  ${KIOSK_URL}                          ║${NC}"
 echo -e "${GREEN}║  Service:  sudo systemctl status ${SERVICE_NAME}       ║${NC}"
 echo -e "${GREEN}║  Logs:     journalctl -u ${SERVICE_NAME} -f            ║${NC}"
-echo -e "${GREEN}║  Kiosk:    Auto-launches in Chromium on boot      ║${NC}"
-echo -e "${GREEN}║  Reboot the Pi to test autostart + kiosk mode        ║${NC}"
+echo -e "${GREEN}║  Kiosk:    FullPageOS handles browser launch        ║${NC}"
+echo -e "${GREEN}║  Reboot to apply all changes                        ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
