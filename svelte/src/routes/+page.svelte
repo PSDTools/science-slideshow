@@ -5,7 +5,11 @@
 
 	interface SlideshowConfig {
 		weather: { station_id: string; enabled: boolean };
-		slideshow: { image_duration_seconds: number; weather_duration_seconds: number };
+		slideshow: {
+			image_duration_seconds: number;
+			weather_duration_seconds: number;
+			weather_every_n_slides?: number;
+		};
 		arc?: Partial<ArcConfig>;
 	}
 
@@ -46,6 +50,7 @@
 	let countdown = $state(0);
 	let entering = $state(false);
 	let arcConfig = $state({ ...ARC_DEFAULTS });
+	let lastConfigHash = $state('');
 
 	// Trigger weather entrance animations whenever the weather slide becomes active
 	$effect(() => {
@@ -67,12 +72,19 @@
 		slideshow: { image_duration_seconds: 10, weather_duration_seconds: 15 }
 	});
 
-	async function loadConfig() {
+	async function loadConfig(): Promise<boolean> {
 		try {
-			const r = await fetch('/api/config.json');
-			cfg = await r.json();
+			const r = await fetch(`/api/config.json?t=${Date.now()}`);
+			const newCfg = await r.json();
+			const hash = JSON.stringify(newCfg);
+			if (hash === lastConfigHash) return false;
+			lastConfigHash = hash;
+			cfg = newCfg;
 			arcConfig = { ...ARC_DEFAULTS, ...(cfg.arc ?? {}) };
-		} catch {}
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	async function loadWeather(): Promise<WeatherData | null> {
@@ -98,6 +110,9 @@
 
 	function buildSlides(images: DriveImage[], hasWeather: boolean): SlideType[] {
 		const s: SlideType[] = [];
+		const every = cfg.slideshow.weather_every_n_slides ?? 3;
+		let imageCount = 0;
+
 		if (hasWeather) {
 			s.push({ type: 'weather' });
 			s.push({ type: 'radar' });
@@ -105,6 +120,12 @@
 		for (const img of images) {
 			const duration = parseDuration(img.name) ?? undefined;
 			s.push({ type: 'image', url: img.url, name: img.name, duration });
+			imageCount++;
+			// Insert weather+radar after every N images
+			if (hasWeather && imageCount % every === 0) {
+				s.push({ type: 'weather' });
+				s.push({ type: 'radar' });
+			}
 		}
 		return s;
 	}
@@ -112,14 +133,27 @@
 	onMount(() => {
 		let ticker: ReturnType<typeof setInterval>;
 		let weatherRefresh: ReturnType<typeof setInterval>;
+		let configRefresh: ReturnType<typeof setInterval>;
+
+		let pendingSlides: SlideType[] | null = null;
+
+		async function refreshSlides(immediate = false) {
+			weatherData = await loadWeather();
+			const images = await loadImages();
+			const newSlides = buildSlides(images, !!weatherData);
+			if (immediate || slides.length === 0) {
+				slides = newSlides;
+				current = 0;
+				countdown = currentDuration();
+			} else {
+				// Queue for seamless swap at next natural transition
+				pendingSlides = newSlides;
+			}
+		}
 
 		async function init() {
 			await loadConfig();
-			weatherData = await loadWeather();
-			const images = await loadImages();
-			slides = buildSlides(images, !!weatherData);
-			current = 0;
-			countdown = currentDuration();
+			await refreshSlides(true);
 
 			ticker = setInterval(() => {
 				countdown--;
@@ -133,7 +167,14 @@
 					}
 				}
 				if (countdown <= 0) {
-					current = (current + 1) % (slides.length || 1);
+					// Apply queued slide changes at natural transition
+					if (pendingSlides) {
+						slides = pendingSlides;
+						pendingSlides = null;
+						current = 0;
+					} else {
+						current = (current + 1) % (slides.length || 1);
+					}
 					countdown = currentDuration();
 					if (slides[current]?.type === 'weather') {
 						loadWeather().then((d) => {
@@ -152,6 +193,27 @@
 					10 * 60 * 1000
 				);
 			}
+
+			// Poll for config/image changes every 5 minutes
+			configRefresh = setInterval(async () => {
+				const changed = await loadConfig();
+				if (changed) {
+					console.log('[slideshow] Config changed, rebuilding slides');
+					await refreshSlides();
+				} else {
+					// Even if config didn't change, check for new images
+					const images = await loadImages();
+					const imageIds = images.map((i) => i.id).join(',');
+					const currentImageIds = slides
+						.filter((s): s is Extract<SlideType, { type: 'image' }> => s.type === 'image')
+						.map((s) => s.url.replace('/image/', '').replace('.jpg', ''))
+						.join(',');
+					if (imageIds !== currentImageIds) {
+						console.log('[slideshow] Images changed, rebuilding slides');
+						await refreshSlides();
+					}
+				}
+			}, 5 * 60 * 1000);
 		}
 
 		function currentDuration() {
@@ -173,6 +235,7 @@
 		return () => {
 			clearInterval(ticker);
 			clearInterval(weatherRefresh);
+			clearInterval(configRefresh);
 			window.removeEventListener('keydown', onKey);
 		};
 	});
