@@ -134,8 +134,8 @@ def sync_settings(config):
     """Fetch display_settings.json from Google Drive folder (hourly)."""
     global _last_settings_sync, _cached_drive_settings
 
-    # Only fetch once per hour
-    if time.time() - _last_settings_sync < 3600:
+    # Fetch every sync cycle (5 minutes) so Drive config changes apply quickly
+    if time.time() - _last_settings_sync < 300:
         return _cached_drive_settings
 
     folder_id = config.get("google_drive", {}).get("folder_id")

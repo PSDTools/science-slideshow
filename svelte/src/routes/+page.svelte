@@ -43,30 +43,16 @@
 		return null;
 	}
 
-	let slides = $state<SlideType[]>([]);
-	let current = $state(0);
+	let images = $state<SlideType[]>([]);
+	let currentSlideType = $state<'weather' | 'radar' | 'image'>('weather');
+	let imageIndex = $state(0);
+	let imagesSinceWeather = $state(0);
 	let weatherData = $state<WeatherData | null>(null);
 	let debug = $state(false);
 	let countdown = $state(0);
-	let entering = $state(false);
+	let radarUrl = $state('https://radar.weather.gov/ridge/standard/KLSX_loop.gif');
 	let arcConfig = $state({ ...ARC_DEFAULTS });
 	let lastConfigHash = $state('');
-
-	// Trigger weather entrance animations whenever the weather slide becomes active
-	$effect(() => {
-		if (slides[current]?.type === 'weather') {
-			entering = true;
-			const t = setTimeout(() => {
-				entering = false;
-			}, 2200);
-			return () => {
-				clearTimeout(t);
-				entering = false;
-			};
-		} else {
-			entering = false;
-		}
-	});
 	let cfg = $state<SlideshowConfig>({
 		weather: { station_id: '', enabled: false },
 		slideshow: { image_duration_seconds: 10, weather_duration_seconds: 15 }
@@ -108,26 +94,50 @@
 		}
 	}
 
-	function buildSlides(images: DriveImage[], hasWeather: boolean): SlideType[] {
-		const s: SlideType[] = [];
-		const every = cfg.slideshow.weather_every_n_slides ?? 3;
-		let imageCount = 0;
-
-		if (hasWeather) {
-			s.push({ type: 'weather' });
-			s.push({ type: 'radar' });
-		}
-		for (const img of images) {
+	function buildImageSlides(driveImages: DriveImage[]): SlideType[] {
+		return driveImages.map((img) => {
 			const duration = parseDuration(img.name) ?? undefined;
-			s.push({ type: 'image', url: img.url, name: img.name, duration });
-			imageCount++;
-			// Insert weather+radar after every N images
-			if (hasWeather && imageCount % every === 0) {
-				s.push({ type: 'weather' });
-				s.push({ type: 'radar' });
+			return { type: 'image' as const, url: img.url, name: img.name, duration };
+		});
+	}
+
+	function advanceSlide() {
+		const hasWeather = !!weatherData;
+		const every = cfg.slideshow.weather_every_n_slides ?? 3;
+
+		if (!hasWeather || images.length === 0) {
+			// No weather or no images — just cycle images
+			if (images.length > 0) {
+				imageIndex = (imageIndex + 1) % images.length;
+				currentSlideType = 'image';
+			}
+			return;
+		}
+
+		// State machine: weather → radar → N images → weather → ...
+		if (currentSlideType === 'weather') {
+			radarUrl = `https://radar.weather.gov/ridge/standard/KLSX_loop.gif?t=${Math.floor(Date.now() / 300000)}`;
+			currentSlideType = 'radar';
+		} else if (currentSlideType === 'radar') {
+			currentSlideType = 'image';
+			imagesSinceWeather = 1;
+			imageIndex = imageIndex % images.length;
+		} else {
+			// Currently on an image
+			if (imagesSinceWeather >= every) {
+				// Shown enough images, back to weather
+				currentSlideType = 'weather';
+				imagesSinceWeather = 0;
+				// Refresh weather data when entering weather slide
+				loadWeather().then((d) => {
+					if (d) weatherData = d;
+				});
+			} else {
+				// Next image
+				imageIndex = (imageIndex + 1) % images.length;
+				imagesSinceWeather++;
 			}
 		}
-		return s;
 	}
 
 	onMount(() => {
@@ -135,19 +145,20 @@
 		let weatherRefresh: ReturnType<typeof setInterval>;
 		let configRefresh: ReturnType<typeof setInterval>;
 
-		let pendingSlides: SlideType[] | null = null;
+		let pendingImages: SlideType[] | null = null;
 
 		async function refreshSlides(immediate = false) {
 			weatherData = await loadWeather();
-			const images = await loadImages();
-			const newSlides = buildSlides(images, !!weatherData);
-			if (immediate || slides.length === 0) {
-				slides = newSlides;
-				current = 0;
+			const driveImages = await loadImages();
+			const newImages = buildImageSlides(driveImages);
+			if (immediate || images.length === 0) {
+				images = newImages;
+				imageIndex = 0;
+				imagesSinceWeather = 0;
+				currentSlideType = weatherData ? 'weather' : 'image';
 				countdown = currentDuration();
 			} else {
-				// Queue for seamless swap at next natural transition
-				pendingSlides = newSlides;
+				pendingImages = newImages;
 			}
 		}
 
@@ -158,29 +169,23 @@
 			ticker = setInterval(() => {
 				countdown--;
 				// Preload next image when 3s away from transition
-				if (countdown === 3) {
-					const nextIdx = (current + 1) % (slides.length || 1);
-					const next = slides[nextIdx];
+				if (countdown === 3 && currentSlideType !== 'weather') {
+					const nextIdx = (imageIndex + (currentSlideType === 'image' ? 1 : 0)) % (images.length || 1);
+					const next = images[nextIdx];
 					if (next?.type === 'image') {
 						const img = new Image();
 						img.src = next.url;
 					}
 				}
 				if (countdown <= 0) {
-					// Apply queued slide changes at natural transition
-					if (pendingSlides) {
-						slides = pendingSlides;
-						pendingSlides = null;
-						current = 0;
-					} else {
-						current = (current + 1) % (slides.length || 1);
+					// Apply queued image changes at weather transition
+					if (pendingImages && (currentSlideType === 'weather' || currentSlideType === 'radar')) {
+						images = pendingImages;
+						pendingImages = null;
+						imageIndex = 0;
 					}
+					advanceSlide();
 					countdown = currentDuration();
-					if (slides[current]?.type === 'weather') {
-						loadWeather().then((d) => {
-							if (d) weatherData = d;
-						});
-					}
 				}
 			}, 1000);
 
@@ -201,10 +206,9 @@
 					console.log('[slideshow] Config changed, rebuilding slides');
 					await refreshSlides();
 				} else {
-					// Even if config didn't change, check for new images
-					const images = await loadImages();
-					const imageIds = images.map((i) => i.id).join(',');
-					const currentImageIds = slides
+					const driveImages = await loadImages();
+					const imageIds = driveImages.map((i) => i.id).join(',');
+					const currentImageIds = images
 						.filter((s): s is Extract<SlideType, { type: 'image' }> => s.type === 'image')
 						.map((s) => s.url.replace('/image/', '').replace('.jpg', ''))
 						.join(',');
@@ -217,11 +221,10 @@
 		}
 
 		function currentDuration() {
-			if (!slides.length) return 10;
-			const s = slides[current];
-			if (s?.type === 'weather' || s?.type === 'radar')
+			if (currentSlideType === 'weather' || currentSlideType === 'radar')
 				return cfg.slideshow.weather_duration_seconds ?? 15;
-			// Per-file override wins over config default
+			if (images.length === 0) return 10;
+			const s = images[imageIndex] as Extract<SlideType, { type: 'image' }> | undefined;
 			return s?.duration ?? cfg.slideshow.image_duration_seconds ?? 10;
 		}
 
@@ -240,12 +243,9 @@
 		};
 	});
 
-	const currentSlide = $derived(slides[current] ?? null);
-
-	function getRadarUrl() {
-		// Cache bust the radar loop every 5 minutes (300000ms)
-		return `https://radar.weather.gov/ridge/standard/KLSX_loop.gif?t=${Math.floor(Date.now() / 300000)}`;
-	}
+	const currentImageSlide = $derived(
+		images[imageIndex] as Extract<SlideType, { type: 'image' }> | undefined
+	);
 </script>
 
 <svelte:head>
@@ -253,33 +253,31 @@
 </svelte:head>
 
 <div class="root">
-	{#each slides as slide, i}
-		<div class="slide" class:active={i === current}>
-			{#if i === current}
-				{#if slide.type === 'image'}
-					<img src={slide.url} alt="" decoding="async" />
-				{:else if slide.type === 'radar'}
-					<!-- svelte-ignore a11y_missing_attribute -->
-					<img src={getRadarUrl()} decoding="async" />
-				{:else}
-					<WeatherDisplay data={weatherData} {entering} {arcConfig} />
-				{/if}
-			{/if}
-		</div>
-	{/each}
+	<div class="slide" class:active={currentSlideType === 'weather'}>
+		<WeatherDisplay data={weatherData} {arcConfig} />
+	</div>
+	<div class="slide" class:active={currentSlideType === 'radar'}>
+		<!-- svelte-ignore a11y_missing_attribute -->
+		<img src={radarUrl} decoding="async" />
+	</div>
+	<div class="slide" class:active={currentSlideType === 'image'}>
+		{#if currentImageSlide}
+			<img src={currentImageSlide.url} alt="" decoding="async" />
+		{/if}
+	</div>
 
-	{#if slides.length === 0}
+	{#if images.length === 0 && !weatherData}
 		<div class="loading">Loading…</div>
 	{/if}
 
 	{#if debug}
 		<div class="debug">
-			Slide: {current + 1}/{slides.length}<br />
+			Image: {imageIndex + 1}/{images.length} ({imagesSinceWeather}/{cfg.slideshow.weather_every_n_slides ?? 3})<br />
 			Next in: {countdown}s<br />
-			Type: {currentSlide?.type ?? 'none'}
-			{#if currentSlide?.type === 'image'}
-				<br />File: {currentSlide.name}
-				{#if currentSlide.duration}<br />⏱ custom: {currentSlide.duration}s{/if}
+			Type: {currentSlideType}
+			{#if currentSlideType === 'image' && currentImageSlide}
+				<br />File: {currentImageSlide.name}
+				{#if currentImageSlide.duration}<br />⏱ custom: {currentImageSlide.duration}s{/if}
 			{/if}
 		</div>
 	{/if}
@@ -306,16 +304,14 @@
 	.slide {
 		position: absolute;
 		inset: 0;
-		opacity: 0;
+		display: none;
 		pointer-events: none;
 		overflow: hidden;
-		content-visibility: hidden; /* browser skips rendering entirely for inactive slides */
 	}
 
 	.slide.active {
-		opacity: 1;
+		display: block;
 		pointer-events: auto;
-		content-visibility: visible;
 	}
 
 	.slide img {

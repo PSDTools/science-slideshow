@@ -27,3 +27,4 @@ Thumbs.db
 *.swo
 config.json
 image_cache.json
+svelte/build/
