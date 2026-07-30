@@ -47,12 +47,14 @@
 	let currentSlideType = $state<'weather' | 'radar' | 'image'>('weather');
 	let imageIndex = $state(0);
 	let imagesSinceWeather = $state(0);
+	let firstImageCycle = $state(true);
 	let weatherData = $state<WeatherData | null>(null);
 	let debug = $state(false);
 	let countdown = $state(0);
 	let radarUrl = $state('https://radar.weather.gov/ridge/standard/KLSX_loop.gif');
 	let arcConfig = $state({ ...ARC_DEFAULTS });
 	let lastConfigHash = $state('');
+
 	let cfg = $state<SlideshowConfig>({
 		weather: { station_id: '', enabled: false },
 		slideshow: { image_duration_seconds: 10, weather_duration_seconds: 15 }
@@ -121,7 +123,12 @@
 		} else if (currentSlideType === 'radar') {
 			currentSlideType = 'image';
 			imagesSinceWeather = 1;
-			imageIndex = imageIndex % images.length;
+			if (firstImageCycle) {
+				imageIndex = imageIndex % images.length;
+				firstImageCycle = false;
+			} else {
+				imageIndex = (imageIndex + 1) % images.length;
+			}
 		} else {
 			// Currently on an image
 			if (imagesSinceWeather >= every) {
@@ -155,6 +162,7 @@
 				images = newImages;
 				imageIndex = 0;
 				imagesSinceWeather = 0;
+				firstImageCycle = true;
 				currentSlideType = weatherData ? 'weather' : 'image';
 				countdown = currentDuration();
 			} else {
@@ -304,13 +312,13 @@
 	.slide {
 		position: absolute;
 		inset: 0;
-		display: none;
+		opacity: 0;
 		pointer-events: none;
 		overflow: hidden;
 	}
 
 	.slide.active {
-		display: block;
+		opacity: 1;
 		pointer-events: auto;
 	}
 

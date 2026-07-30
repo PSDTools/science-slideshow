@@ -1536,7 +1536,7 @@
 	:global(#wx-clock) {
 		font-family: 'Outfit', sans-serif;
 		font-weight: 200;
-		font-size: clamp(22px, 4vw, 38px);
+		font-size: clamp(36px, 6vw, 60px);
 		color: var(--text);
 		letter-spacing: 0.05em;
 		opacity: 0.55;
@@ -1544,7 +1544,7 @@
 	:global(#wx-date) {
 		font-family: 'Outfit', sans-serif;
 		font-weight: 300;
-		font-size: clamp(8px, 1.1vw, 11px);
+		font-size: clamp(13px, 1.7vw, 18px);
 		color: var(--sub);
 		letter-spacing: 0.22em;
 		text-transform: uppercase;
@@ -1652,17 +1652,17 @@
 	:global(.wx-d-label) {
 		font-family: 'Outfit', sans-serif;
 		font-weight: 300;
-		font-size: clamp(12px, 1.6vw, 18px);
+		font-size: clamp(16px, 2.1vw, 24px);
 		letter-spacing: 0.28em;
 		text-transform: uppercase;
 		color: var(--sub);
 		opacity: 0.6;
-		margin-bottom: 6px;
+		margin-bottom: 8px;
 	}
 	:global(.wx-d-val) {
 		font-family: 'Outfit', sans-serif;
 		font-weight: 400;
-		font-size: clamp(28px, 4vw, 44px);
+		font-size: clamp(38px, 5.2vw, 60px);
 		color: var(--text);
 		letter-spacing: 0.04em;
 	}
@@ -1686,7 +1686,7 @@
 		pointer-events: none;
 		font-family: 'Outfit', sans-serif;
 		font-weight: 300;
-		font-size: clamp(7px, 0.9vw, 9px);
+		font-size: clamp(10px, 1.25vw, 14px);
 		letter-spacing: 0.2em;
 		text-transform: uppercase;
 		color: var(--sub);

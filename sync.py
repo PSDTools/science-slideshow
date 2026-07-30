@@ -197,6 +197,33 @@ def copy_config(config):
     with open(API_DIR / "config.json", "w") as f:
         json.dump(config, f)
 
+def _set_display_power(on: bool) -> bool:
+    """Try each available backend to toggle the HDMI display. Returns True on success."""
+    # FullPageOS runs Chromium under X11 as the `pi` user on :0.
+    # xset is the reliable path; vcgencmd display_power is a no-op on modern KMS.
+    env = {**os.environ, "DISPLAY": ":0", "XAUTHORITY": "/home/pi/.Xauthority"}
+
+    attempts = [
+        ["xset", "dpms", "force", "on" if on else "off"],
+        ["wlr-randr", "--output", "HDMI-A-1", "--on" if on else "--off"],
+        ["vcgencmd", "display_power", "1" if on else "0"],
+    ]
+    for cmd in attempts:
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=5, env=env, text=True)
+            if r.returncode == 0:
+                print(f"[sync] Display {'on' if on else 'off'} via {cmd[0]}")
+                return True
+            else:
+                print(f"[sync] {cmd[0]} failed ({r.returncode}): {r.stderr.strip() or r.stdout.strip()}")
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            print(f"[sync] {cmd[0]} error: {e}")
+    print("[sync] No display-power backend worked")
+    return False
+
+
 def check_power_schedule(config):
     """Turn HDMI display on/off based on power_schedule in config."""
     schedule = config.get("power_schedule", {})
@@ -206,22 +233,14 @@ def check_power_schedule(config):
     on_time = schedule.get("on_time", "07:00")
     off_time = schedule.get("off_time", "17:00")
 
-    try:
-        now = datetime.now().strftime("%H:%M")
-        # Compare as strings — works for HH:MM format
-        if on_time <= off_time:
-            display_on = on_time <= now < off_time
-        else:
-            # Overnight schedule (e.g., on at 18:00, off at 06:00)
-            display_on = now >= on_time or now < off_time
+    now = datetime.now().strftime("%H:%M")
+    if on_time <= off_time:
+        display_on = on_time <= now < off_time
+    else:
+        # Overnight schedule (e.g., on at 18:00, off at 06:00)
+        display_on = now >= on_time or now < off_time
 
-        power_val = "1" if display_on else "0"
-        subprocess.run(
-            ["vcgencmd", "display_power", power_val],
-            capture_output=True, timeout=5
-        )
-    except Exception as e:
-        print(f"[sync] Power schedule error: {e}")
+    _set_display_power(display_on)
 
 def main():
     print("[sync] Starting sync loop...")
